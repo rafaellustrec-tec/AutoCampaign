@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABASE_URL},async t=>{
  const root=new Pool({connectionString:process.env.TEST_DATABASE_URL,connectionTimeoutMillis:10000});const schema=`agency_test_${randomUUID().replaceAll('-','')}`;
  await root.query(`CREATE SCHEMA ${schema}`);const url=new URL(process.env.TEST_DATABASE_URL!);url.searchParams.set('options',`-c search_path=${schema}`);process.env.DATABASE_URL=url.toString();
- process.env.ADS_PUBLISH_ENABLED='true';process.env.ENCRYPTION_KEY=randomBytes(32).toString('base64');process.env.META_API_VERSION='v25.0';
+ process.env.ADS_PUBLISH_ENABLED='true';process.env.ADS_ACTIVATION_ENABLED='true';process.env.ENCRYPTION_KEY=randomBytes(32).toString('base64');process.env.META_API_VERSION='v25.0';
  delete process.env.N8N_WEBHOOK_URL;delete process.env.N8N_WEBHOOK_TOKEN;delete process.env.INTERNAL_API_TOKEN;
  const {db,transaction}=await import('../../src/lib/db');const {saveCampaign,campaignAction}=await import('../../src/lib/campaigns');
  const {claimJob,runJob,completeJob,heartbeatJob,validateJob}=await import('../../src/lib/job-runner');const {operation}=await import('../../src/lib/publishers');const {encrypt}=await import('../../src/lib/security');
@@ -59,7 +59,18 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
   let job:any;
   await t.test('claim concorrente e lease válido',async()=>{const claims=await Promise.all([claimJob(),claimJob()]);assert.equal(claims.filter(Boolean).length,1);job=claims.find(Boolean);await assert.rejects(transaction(tx=>validateJob(tx,job.id,randomUUID())),/expirada/);await heartbeatJob(job.id,job.lease_token);await assert.rejects(completeJob(job.id,job.lease_token),/incompleta/);});
   await t.test('worker executa conector Meta com API simulada, sem webhook',async()=>{const results=await Promise.all([runJob(job),runJob(job)]);assert.equal(results.filter(r=>r.status==='succeeded').length,1);assert.equal((await jobState(job.id)).status,'succeeded');assert.equal((await db.query('SELECT status FROM campaigns WHERE id=$1',[campaign.id])).rows[0].status,'paused');assert.equal(calls.filter(c=>c.path.endsWith('/campaigns')).length,1);for(const call of calls.filter(c=>['/campaigns','/adsets','/ads'].some(s=>c.path.endsWith(s))))assert.equal(call.body.get('status'),'PAUSED');const set=calls.find(c=>c.path.endsWith('/adsets'))!;assert.equal(set.body.get('destination_type'),'WHATSAPP');assert.equal(set.body.get('optimization_goal'),'CONVERSATIONS');const creative=calls.find(c=>c.path.endsWith('/adcreatives'))!;assert.equal(JSON.parse(creative.body.get('object_story_spec')!).link_data.call_to_action.value.whatsapp_number,'5571999999999');});
-  await t.test('apenas aprovador autoriza ativação; worker ativa e conclui',async()=>{await assert.rejects(campaignAction(operator,campaign.id,'activate',2));await campaignAction(approver,campaign.id,'activate',2);job=await claimJob();assert.equal((await runJob(job)).status,'succeeded');assert.equal((await db.query('SELECT status FROM campaigns WHERE id=$1',[campaign.id])).rows[0].status,'active');});
+  await t.test('bloqueio independente impede aprovação e worker antes de qualquer chamada Meta',async()=>{
+    process.env.ADS_ACTIVATION_ENABLED='false';const before=calls.length;
+    await assert.rejects(campaignAction(admin,campaign.id,'activate',2),/Ativação bloqueada/);
+    assert.equal((await db.query("SELECT count(*) FROM approvals WHERE campaign_id=$1 AND kind='activate'",[campaign.id])).rows[0].count,'0');
+    assert.equal((await db.query("SELECT count(*) FROM jobs WHERE campaign_id=$1 AND kind='activate'",[campaign.id])).rows[0].count,'0');
+    process.env.ADS_ACTIVATION_ENABLED='true';await campaignAction(approver,campaign.id,'activate',2);job=await claimJob();
+    process.env.ADS_ACTIVATION_ENABLED='false';
+    await assert.rejects(transaction(tx=>validateJob(tx,job.id,job.lease_token)),/Ativação bloqueada/);
+    assert.equal(calls.length,before);
+    process.env.ADS_ACTIVATION_ENABLED='true';
+  });
+  await t.test('somente com desbloqueio explícito o worker ativa a versão aprovada',async()=>{assert.equal((await runJob(job)).status,'succeeded');assert.equal((await db.query('SELECT status FROM campaigns WHERE id=$1',[campaign.id])).rows[0].status,'active');});
   await t.test('número não vinculado falha antes de qualquer mutação',async()=>{await fresh();job=await claimJob();const before=calls.length;mode='wrong-phone';assert.equal((await runJob(job)).status,'failed');assert.equal((await jobState(job.id)).error,'INVALID_CONFIGURATION');assert.equal(calls.length,before);mode='ok';});
   await t.test('quota em leitura agenda retentativa segura',async()=>{await fresh();job=await claimJob();mode='rate-limit';assert.equal((await runJob(job)).status,'queued');assert.equal((await jobState(job.id)).error,'RATE_LIMIT');await db.query("UPDATE jobs SET available_at=now()-interval '1 second' WHERE id=$1",[job.id]);mode='ok';job=await claimJob();assert.equal(job.attempts,2);assert.equal((await runJob(job)).status,'succeeded');});
   await t.test('autorização expirada exige reconexão',async()=>{await fresh();job=await claimJob();mode='auth';assert.equal((await runJob(job)).status,'failed');assert.equal((await jobState(job.id)).error,'AUTH_EXPIRED');assert.equal((await db.query('SELECT status FROM connections WHERE id=$1',[connection.id])).rows[0].status,'reconnect');await db.query("UPDATE connections SET status='connected' WHERE id=$1",[connection.id]);mode='ok';});

@@ -5,6 +5,7 @@ import type { User } from './auth';
 import { requireRole } from './domain';
 import { AppError } from './domain';
 import { encrypt,decrypt,hash } from './security';
+import { metaLoginUrl,exchangeMetaCode } from './meta-login';
 type Platform='meta'|'google';
 type Connection={id:string;platform:Platform;credentials:string};
 type Credentials={access_token:string;refresh_token?:string;expires_at:number};
@@ -20,13 +21,13 @@ export async function providerJson(url:string,init?:RequestInit):Promise<any> {
   return response.json();
 }
 const callback=(platform:Platform)=>`${setting('APP_URL')}/api/oauth/${platform}/callback`;
+const metaSettings=()=>({appId:setting('META_APP_ID'),apiVersion:setting('META_API_VERSION'),configId:setting('META_LOGIN_CONFIG_ID'),redirectUri:callback('meta')});
 export async function oauthStart(user:User,clientId:string,platform:Platform) {
   const state=randomBytes(32).toString('hex');
-  const target=platform==='google'?new URL('https://accounts.google.com/o/oauth2/v2/auth'):new URL(`https://www.facebook.com/${setting('META_API_VERSION')}/dialog/oauth`);
-  target.searchParams.set('client_id',setting(platform==='google'?'GOOGLE_CLIENT_ID':'META_APP_ID'));
-  target.searchParams.set('redirect_uri',callback(platform)); target.searchParams.set('state',state);target.searchParams.set('response_type','code');
-  target.searchParams.set('scope',platform==='google'?'https://www.googleapis.com/auth/adwords':'ads_read,ads_management,business_management,pages_show_list,pages_read_engagement');
-  if(platform==='google') {target.searchParams.set('access_type','offline');target.searchParams.set('prompt','consent');}
+  const target=platform==='meta'?metaLoginUrl(metaSettings(),state):new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  if(platform==='google') {
+    target.search=new URLSearchParams({client_id:setting('GOOGLE_CLIENT_ID'),redirect_uri:callback(platform),state,response_type:'code',scope:'https://www.googleapis.com/auth/adwords',access_type:'offline',prompt:'consent'}).toString();
+  }
   await db.query("INSERT INTO oauth_states(state_hash,user_id,client_id,platform,expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes')",[hash(state),user.id,clientId,platform]);
   return NextResponse.redirect(target);
 }
@@ -39,14 +40,10 @@ export async function oauthCallback(request:Request,user:User,platform:Platform)
   let token;
   if(platform==='google') token=await providerJson('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:setting('GOOGLE_CLIENT_ID'),client_secret:setting('GOOGLE_CLIENT_SECRET'),redirect_uri:callback(platform),grant_type:'authorization_code'})});
   else {
-    const endpoint=`https://graph.facebook.com/${setting('META_API_VERSION')}/oauth/access_token`;
-    const query=new URLSearchParams({code,client_id:setting('META_APP_ID'),client_secret:setting('META_APP_SECRET'),redirect_uri:callback(platform)});
-    token=await providerJson(`${endpoint}?${query}`);
-    const exchange=new URLSearchParams({grant_type:'fb_exchange_token',client_id:setting('META_APP_ID'),client_secret:setting('META_APP_SECRET'),fb_exchange_token:token.access_token});
-    token=await providerJson(`${endpoint}?${exchange}`);
+    token=await exchangeMetaCode({...metaSettings(),appSecret:setting('META_APP_SECRET')},code,providerJson);
   }
   if(!token.access_token||(platform==='google'&&!token.refresh_token)) throw new AppError(422,'Credencial incompleta. Revogue e autorize novamente com consentimento offline.');
-  const credentials:Credentials={access_token:token.access_token,refresh_token:token.refresh_token,expires_at:Date.now()+Number(token.expires_in??3600)*1000};
+  const credentials:Credentials={access_token:token.access_token,refresh_token:token.refresh_token,expires_at:platform==='meta'?token.expires_at:Date.now()+Number(token.expires_in??3600)*1000};
   await db.query('INSERT INTO connections(client_id,platform,credentials) VALUES($1,$2,$3)',[pending.client_id,platform,encrypt(JSON.stringify(credentials))]);
   return NextResponse.redirect(`${setting('APP_URL')}/?client=${pending.client_id}&tab=connections`);
 }

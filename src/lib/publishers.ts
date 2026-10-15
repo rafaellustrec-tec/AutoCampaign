@@ -1,4 +1,5 @@
 import { db,transaction } from './db';
+import { requireActivationEnabled } from './publication-policy';
 import { AppError,whatsappBriefingSchema,type Briefing,whatsappDestination } from './domain';
 import { accessToken,googleRequest,providerJson } from './oauth';
 import { assetBytes } from './storage';
@@ -8,6 +9,7 @@ type Account={id:string;external_id:string;currency:string;timezone:string;platf
 type External={key:string;id:string;kind:string;status?:string};
 const metaVersion=()=>{if(!/^v\d+\.\d+$/.test(process.env.META_API_VERSION??''))throw new AppError(422,'Configure META_API_VERSION.');return process.env.META_API_VERSION;};
 async function meta(token:string,path:string,body?:Record<string,unknown>) {
+  if(body?.status==='ACTIVE')requireActivationEnabled('activate');
   const form=new URLSearchParams();for(const [k,v] of Object.entries(body??{}))form.set(k,typeof v==='string'?v:JSON.stringify(v));
   return providerJson(`https://graph.facebook.com/${metaVersion()}/${path}`,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/x-www-form-urlencoded'}:{})},body:body?form:undefined});
 }
@@ -92,6 +94,7 @@ async function createMeta(job:Job,account:Account,briefing:Briefing,c:Channel,to
  }
 }
 export async function executePublication(job:Job) {
+ requireActivationEnabled(job.kind);
  if(process.env.ADS_PUBLISH_ENABLED!=='true')throw new AppError(422,'Publicação externa desabilitada.');
  const version=(await db.query('SELECT briefing FROM campaign_versions WHERE campaign_id=$1 AND version=$2',[job.campaign_id,job.version])).rows[0];const briefing=whatsappBriefingSchema.parse(version.briefing);
  for(const c of briefing.channels) {

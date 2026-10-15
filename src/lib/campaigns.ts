@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { requireActivationEnabled } from './publication-policy';
 import { transaction } from './db';
 import { requireClient,type User } from './auth';
 import { AppError,whatsappBriefingSchema,makeProposal,requireRole,requireTransition,type Briefing } from './domain';
@@ -32,6 +33,7 @@ export async function saveCampaign(user:User,clientId:string,input:unknown,campa
 }
 export async function campaignAction(user:User,id:string,action:string,expectedVersion:number) {
   requireRole(user.role,action==='approve'||action==='activate'?['approver']:['operator']);
+  requireActivationEnabled(action);
   return transaction(async tx=>{
     const campaign=(await tx.query('SELECT * FROM campaigns WHERE id=$1 FOR UPDATE',[id])).rows[0];
     if(!campaign) throw new AppError(404,'Campanha não encontrada.');
