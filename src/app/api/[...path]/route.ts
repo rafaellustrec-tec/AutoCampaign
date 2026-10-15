@@ -51,7 +51,7 @@ async function handler(request:Request,context:Context) {
     const clientId=uuid.parse(path[1]); await requireClient(user,clientId);
     if(path[2]==='members'&&method==='POST') { requireRole(user.role,[]); const {userId}=z.object({userId:uuid}).parse(await request.json()); await transaction(async tx=>{ await tx.query('INSERT INTO client_members(client_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[clientId,userId]); await audit(tx,user,clientId,'member.granted',userId); }); return NextResponse.json({ok:true}); }
     if(path[2]==='accounts'&&method==='GET') return NextResponse.json((await db.query('SELECT a.*,c.status AS connection_status FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.client_id=$1 ORDER BY a.name',[clientId])).rows);
-    if(path[2]==='connections'&&method==='GET') return NextResponse.json((await db.query('SELECT id,platform,status,created_at FROM connections WHERE client_id=$1',[clientId])).rows);
+    if(path[2]==='connections'&&path.length===3&&method==='GET') return NextResponse.json((await db.query('SELECT id,platform,status,created_at FROM connections WHERE client_id=$1',[clientId])).rows);
     if(path[2]==='connections'&&path[3]&&path[4]==='accounts') {
       requireRole(user.role,[]); const connectionId=uuid.parse(path[3]);
       const connection=(await db.query('SELECT * FROM connections WHERE id=$1 AND client_id=$2',[connectionId,clientId])).rows[0]; if(!connection) throw new AppError(404,'Conexão não encontrada.');
