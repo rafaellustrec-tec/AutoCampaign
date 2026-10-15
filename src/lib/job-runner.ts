@@ -19,7 +19,6 @@ export async function validateJob(tx:PoolClient,id:string,lease:string):Promise<
   const job=(await tx.query("SELECT * FROM jobs WHERE id=$1 AND lease_token=$2 AND status='running' AND lease_until>now() FOR UPDATE",[id,lease])).rows[0];
   if(!job) throw new AppError(409,'Execução expirada ou já concluída.');
   if(!['create','activate'].includes(job.kind)) throw new AppError(422,'Tipo de tarefa fora do piloto Meta WhatsApp.');
-  requireActivationEnabled(job.kind);
   const campaign=(await tx.query('SELECT version,status FROM campaigns WHERE id=$1 FOR UPDATE',[job.campaign_id])).rows[0];
   if(!campaign||campaign.version!==job.version||campaign.status!==(job.kind==='create'?'creating':'activating')) throw new AppError(409,'Versão ou estado da campanha divergente.');
   const approval=await tx.query('SELECT 1 FROM approvals WHERE campaign_id=$1 AND version=$2 AND kind=$3',[job.campaign_id,job.version,job.kind==='activate'?'activate':'create']);
@@ -65,6 +64,7 @@ export async function runClaimedJob(job:Job,execute:(job:Job)=>Promise<void>=exe
   let heartbeat:ReturnType<typeof setInterval>|undefined;let pending:Promise<void>|undefined;
   try {
     await transaction(tx=>validateJob(tx,job.id,job.lease_token));
+    requireActivationEnabled(job.kind);
     heartbeat=setInterval(()=>{if(!pending)pending=heartbeatJob(job.id,job.lease_token).catch(()=>{}).finally(()=>{pending=undefined;});},30000);
     await execute(job);
     await completeJob(job.id,job.lease_token);

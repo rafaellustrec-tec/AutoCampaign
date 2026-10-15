@@ -66,9 +66,14 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
     assert.equal((await db.query("SELECT count(*) FROM jobs WHERE campaign_id=$1 AND kind='activate'",[campaign.id])).rows[0].count,'0');
     process.env.ADS_ACTIVATION_ENABLED='true';await campaignAction(approver,campaign.id,'activate',2);job=await claimJob();
     process.env.ADS_ACTIVATION_ENABLED='false';
-    await assert.rejects(transaction(tx=>validateJob(tx,job.id,job.lease_token)),/Ativação bloqueada/);
+    assert.equal((await runJob(job)).status,'failed');
+    assert.equal((await jobState(job.id)).status,'failed');
     assert.equal(calls.length,before);
     process.env.ADS_ACTIVATION_ENABLED='true';
+    // Simulate the existing explicit retry action after the server gate is enabled.
+    await db.query("UPDATE jobs SET status='queued',available_at=now(),attempts=0,lease_token=NULL,lease_until=NULL,error=NULL WHERE id=$1",[job.id]);
+    await db.query("UPDATE campaigns SET status='activating' WHERE id=$1",[campaign.id]);
+    job=await claimJob(job.id);
   });
   await t.test('somente com desbloqueio explícito o worker ativa a versão aprovada',async()=>{assert.equal((await runJob(job)).status,'succeeded');assert.equal((await db.query('SELECT status FROM campaigns WHERE id=$1',[campaign.id])).rows[0].status,'active');});
   await t.test('número não vinculado falha antes de qualquer mutação',async()=>{await fresh();job=await claimJob();const before=calls.length;mode='wrong-phone';assert.equal((await runJob(job)).status,'failed');assert.equal((await jobState(job.id)).error,'INVALID_CONFIGURATION');assert.equal(calls.length,before);mode='ok';});
