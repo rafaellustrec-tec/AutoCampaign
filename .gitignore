@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.env*
+!.env.example
+coverage/
+*.tsbuildinfo
+artifacts/
+.cloudfy.json
+.vercel/
+.supabase/
+
