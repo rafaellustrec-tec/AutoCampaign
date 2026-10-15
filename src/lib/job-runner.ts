@@ -5,11 +5,11 @@ import { AppError } from './domain';
 import { executePublication } from './publishers';
 
 export type Job = {id:string;client_id:string;campaign_id:string;version:number;kind:'create'|'activate'|'sync';lease_token:string;attempts:number;max_attempts:number};
-export async function claimJob():Promise<Job|null> {
+export async function claimJob(id?:string):Promise<Job|null> {
   return transaction(async tx=>{
     const expired=await tx.query("UPDATE jobs SET status='failed',error='AMBIGUOUS_RESULT: execução sem confirmação; reconcilie antes de repetir.',updated_at=now() WHERE status='running' AND lease_until<now() RETURNING campaign_id");
     for(const row of expired.rows) if(row.campaign_id) await tx.query("UPDATE campaigns SET status='error',updated_at=now() WHERE id=$1",[row.campaign_id]);
-    const row=(await tx.query("SELECT * FROM jobs WHERE status='queued' AND available_at<=now() AND attempts<max_attempts ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];
+    const row=(await tx.query("SELECT * FROM jobs WHERE status='queued' AND available_at<=now() AND attempts<max_attempts AND ($1::uuid IS NULL OR id=$1) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1",[id??null])).rows[0];
     if(!row) return null;
     return (await tx.query("UPDATE jobs SET status='running',attempts=attempts+1,lease_token=$2,lease_until=now()+interval '10 minutes',updated_at=now() WHERE id=$1 RETURNING *",[row.id,randomUUID()])).rows[0];
   });
@@ -57,11 +57,11 @@ export async function failJob(id:string,lease:string,error:unknown) {
     return {status:retry?'queued':'failed',code};
   });
 }
-export async function runJob(job:Job,execute:(job:Job)=>Promise<void>=executePublication) {
-  const guard=await db.connect();let locked=false;let heartbeat:ReturnType<typeof setInterval>|undefined;let pending:Promise<void>|undefined;
+// Called only by the process that atomically claimed this lease. A workflow
+// retry claims again by ID and never reuses a serialized lease token.
+export async function runClaimedJob(job:Job,execute:(job:Job)=>Promise<void>=executePublication) {
+  let heartbeat:ReturnType<typeof setInterval>|undefined;let pending:Promise<void>|undefined;
   try {
-    locked=(await guard.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[job.id])).rows[0].locked;
-    if(!locked)return {status:'already_running'};
     await transaction(tx=>validateJob(tx,job.id,job.lease_token));
     heartbeat=setInterval(()=>{if(!pending)pending=heartbeatJob(job.id,job.lease_token).catch(()=>{}).finally(()=>{pending=undefined;});},30000);
     await execute(job);
@@ -71,6 +71,15 @@ export async function runJob(job:Job,execute:(job:Job)=>Promise<void>=executePub
     try{return await failJob(job.id,job.lease_token,error);}catch{return {status:'lost_lease'};}
   }finally{
     if(heartbeat)clearInterval(heartbeat);if(pending)await pending;
+  }
+}
+export async function runJob(job:Job,execute:(job:Job)=>Promise<void>=executePublication) {
+  const guard=await db.connect();let locked=false;
+  try {
+    locked=(await guard.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[job.id])).rows[0].locked;
+    if(!locked)return {status:'already_running'};
+    return await runClaimedJob(job,execute);
+  }finally{
     try{if(locked)await guard.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[job.id]);}finally{guard.release();}
   }
 }

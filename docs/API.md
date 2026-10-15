@@ -1,6 +1,6 @@
 # API do painel — Meta WhatsApp
 
-Sessões HttpOnly de 12 horas, perfis e acesso por cliente. Mutações exigem `Origin` igual a `APP_URL`. O navegador não recebe credenciais da Meta, do banco ou do S3. O worker é o único executor da fila: antigos endpoints `/api/internal/*` retornam 404 e não existe callback de orquestrador.
+Sessões HttpOnly de 12 horas, perfis e acesso por cliente. Mutações exigem `Origin` igual a `APP_URL`. O navegador não recebe credenciais da Meta, do banco ou do S3. A fila é executada pelo worker nativo ou por Vercel Workflows. Antigos endpoints `/api/internal/*` retornam 404.
 
 | Método | Rota `/api/...` | Função |
 |---|---|---|
@@ -26,6 +26,7 @@ Sessões HttpOnly de 12 horas, perfis e acesso por cliente. Mutações exigem `O
 | GET | clients/:id/jobs | execuções e erros sem lease token |
 | POST | jobs/:id/retry | retenta falha sem operações ambíguas |
 | GET | clients/:id/audit | histórico de ações |
+| GET | cron/jobs | recuperação de jobs; exige Bearer CRON_SECRET; sem sessão de usuário |
 
 ## Briefing
 
@@ -33,9 +34,11 @@ Schema vigente: `whatsappBriefingSchema` em `src/lib/domain.ts`. Mantém o envel
 
 Nome, oferta, cidade para conferência e período permanecem no nível principal. O fuso usado para a publicação vem da conta conectada. As configurações fixas de objetivo, otimização e audiência são mostradas na proposta e descritas no README.
 
-## Execução interna, sem HTTP
+## Execução da fila
 
 `claimJob` → `runJob` → `executePublication` → `completeJob`/`failJob`. Aprovações, lease e versão são revalidados. Heartbeat de 30 segundos; lease de 10 minutos. Lock de sessão PostgreSQL impede executores concorrentes da mesma tarefa. O diário de operações preserva identificadores e bloqueia replay ambíguo.
+
+Na Vercel, `campaignWorkflow(jobId)` chama uma etapa que reivindica o job por ID e executa `runClaimedJob`. Esse caminho usa a reivindicação atômica em vez de lock de sessão. `sleep` durável respeita o backoff salvo no banco. A API dispara o Workflow depois de persistir o job; se o despacho falhar, retorna `dispatchPending=true` e o cron pode recuperar o pedido. A rota de recuperação é protegida por segredo e não aceita campanha, tokens ou payloads de publicação do navegador.
 
 ## Compatibilidade futura
 

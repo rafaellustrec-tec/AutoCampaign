@@ -7,6 +7,7 @@ import { requireUser,requireClient,checkOrigin } from '@/lib/auth';
 import { AppError,requireRole,uuid } from '@/lib/domain';
 import { hash,passwordMatches } from '@/lib/security';
 import { saveCampaign,campaignAction,audit } from '@/lib/campaigns';
+import { dispatchCampaignJob,dispatchWorkflow } from '@/lib/workflow-dispatch';
 import { uploadUrl,freezeUpload,storePdf,downloadUrl } from '@/lib/storage';
 import { oauthStart,oauthCallback,listRemoteAccounts } from '@/lib/oauth';
 import { reportPdf,reportData,reportConfigSchema,reportLogo } from '@/lib/reports';
@@ -97,7 +98,14 @@ async function handler(request:Request,context:Context) {
   if(path[0]==='campaigns'&&path[1]) {
     const id=uuid.parse(path[1]);
     if(method==='PUT'&&path.length===2) { const row=(await db.query('SELECT client_id FROM campaigns WHERE id=$1',[id])).rows[0]; if(!row) throw new AppError(404,'Campanha não encontrada.'); return NextResponse.json(await saveCampaign(user,row.client_id,await request.json(),id)); }
-    if(method==='POST'&&path[2]) { const action=z.enum(['propose','approve','create','activate']).parse(path[2]); const {version}=z.object({version:z.number().int().positive()}).parse(await request.json()); return NextResponse.json(await campaignAction(user,id,action,version)); }
+    if(method==='POST'&&path[2]) {
+      const action=z.enum(['propose','approve','create','activate']).parse(path[2]);
+      const {version}=z.object({version:z.number().int().positive()}).parse(await request.json());
+      const campaign=await campaignAction(user,id,action,version);
+      let dispatchPending=false;
+      if(action==='create'||action==='activate')try{await dispatchCampaignJob(id,action,version);}catch{dispatchPending=true;console.error('Workflow dispatch pending; durable job retained.');}
+      return NextResponse.json({...campaign,dispatchPending});
+    }
   }
   if(path[0]==='jobs'&&path[1]&&path[2]==='retry'&&method==='POST') {
     requireRole(user.role,['operator']);const id=uuid.parse(path[1]);
@@ -107,7 +115,7 @@ async function handler(request:Request,context:Context) {
       const uncertain=await tx.query("SELECT 1 FROM provider_operations WHERE campaign_id=$1 AND version=$2 AND state<>'succeeded'",[job.campaign_id,job.version]);if(uncertain.rowCount)throw new AppError(409,'Reconciliação manual dos objetos externos necessária antes da retentativa.');
       await tx.query("UPDATE jobs SET status='queued',attempts=0,available_at=now(),error=NULL,lease_token=NULL,lease_until=NULL WHERE id=$1",[id]);
       await tx.query('UPDATE campaigns SET status=$2,updated_at=now() WHERE id=$1',[job.campaign_id,job.kind==='create'?'creating':'activating']);await audit(tx,user,job.client_id,'job.retried',id);
-    });return NextResponse.json({ok:true});
+    });let dispatchPending=false;if(process.env.JOB_EXECUTOR==='vercel')try{await dispatchWorkflow(id);}catch{dispatchPending=true;}return NextResponse.json({ok:true,dispatchPending});
   }
   throw new AppError(404,'Recurso não encontrado.');
  } catch(error) {

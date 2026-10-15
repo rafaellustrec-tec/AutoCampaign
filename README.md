@@ -1,6 +1,6 @@
 # Órbita — campanhas Meta para WhatsApp
 
-Painel interno da agência para configurar e criar campanhas de conversas no WhatsApp. **Sem n8n:** o worker da aplicação lê a fila PostgreSQL e chama diretamente a Marketing API da Meta.
+Painel interno da agência para configurar e criar campanhas de conversas no WhatsApp. **Sem n8n:** o executor lê a fila PostgreSQL e chama diretamente a Marketing API da Meta. Docker usa worker Node contínuo; Vercel usa `campaignWorkflow`, com tentativas e esperas duráveis.
 
 ## Primeira versão
 
@@ -15,7 +15,7 @@ Cliente → conta Meta → imagens → briefing → proposta → aprovação da 
 
 ## Executar
 
-Requisitos: Node 22 ou 24, PostgreSQL 17+, bucket S3 privado. **Dois processos contínuos:** web e worker. Uma hospedagem de arquivos estáticos não executa a aplicação.
+Requisitos: Node 22 ou 24, PostgreSQL 17+, bucket S3 privado. Em Docker, usar **dois processos contínuos:** web e worker. Na Vercel, configurar `JOB_EXECUTOR=vercel`, banco e Workflows conforme o guia abaixo. Uma hospedagem de arquivos estáticos não executa a aplicação.
 
 1. `npm ci`
 2. Copiar `.env.example` para `.env.local` e configurar banco, URL pública, chave de criptografia, Meta e S3. Segredos ficam apenas no ambiente do servidor.
@@ -31,7 +31,7 @@ Em hospedagem que já exporta as variáveis, usar `npm run db:migrate`, `npm run
 
 ## Execução e recuperação
 
-O worker reivindica tarefas com `SKIP LOCKED`, obtém lock exclusivo por tarefa, revalida a aprovação, renova o lease e registra a conclusão. Não exige webhook nem token de orquestrador e não oferece endpoints HTTP de execução remota.
+O executor reivindica tarefas com `SKIP LOCKED`, revalida a aprovação, renova o lease e registra a conclusão. O worker nativo também obtém lock de sessão por tarefa; o caminho Vercel reivindica por ID sem lock de sessão. O cron protegido recupera pedidos de despacho pendentes; não recebe briefing nem credenciais pela requisição.
 
 Cada mutação externa registra a intenção antes da chamada e grava os identificadores retornados. Resposta perdida ou execução expirada bloqueia a repetição e exige reconciliação. HTTP 429/indisponibilidade antes de mutações ambíguas recebem backoff, até cinco tentativas. Reconexão e configurações inválidas exigem ação humana. Erros exibem códigos sem tokens.
 

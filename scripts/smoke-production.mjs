@@ -17,5 +17,6 @@ try {
  assert.equal(ready,true,`Backend não iniciou: ${logs}`);
  for(const path of ['/','/demo']){const r=await fetch(`${base}${path}`,{signal:AbortSignal.timeout(10000)});assert.equal(r.status,200,path);assert.match(await r.text(),/Órbita/);}
  const api=await fetch(`${base}/api/me`);assert.equal(api.status,401);assert.match(api.headers.get('content-type'),/application\/json/);
+ const cron=await fetch(`${base}/api/cron/jobs`);assert.equal(cron.status,401);
  console.log('Smoke produção: login e demo 200; backend /api/me 401 JSON.');
 }finally{server.kill('SIGTERM');}

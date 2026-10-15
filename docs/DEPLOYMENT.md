@@ -7,7 +7,7 @@
 3. PostgreSQL com banco e usuário exclusivos da aplicação.
 4. Bucket privado compatível com S3.
 
-Web e worker compartilham as mesmas variáveis de banco, criptografia, Meta e S3. Não configurar `N8N_*` nem `INTERNAL_API_TOKEN`: não são usados. Redis não é necessário para a fila atual. O pool padrão tem 12 conexões por processo (2 na Vercel), configurável por `DB_POOL_MAX`; dimensionar o limite do banco para o total de réplicas. Para preparação do painel na Vercel, consultar [VERCEL-SUPABASE.md](VERCEL-SUPABASE.md); a execução assíncrona ainda requer adaptação nesse ambiente.
+Web e worker compartilham as mesmas variáveis de banco, criptografia, Meta e S3. Não configurar `N8N_*` nem `INTERNAL_API_TOKEN`: não são usados. Redis não é necessário para a fila atual. O pool padrão tem 12 conexões por processo (2 na Vercel), configurável por `DB_POOL_MAX`; dimensionar o limite do banco para o total de réplicas. Para Vercel Workflows e Supabase, consultar [VERCEL-SUPABASE.md](VERCEL-SUPABASE.md).
 
 ## Docker
 

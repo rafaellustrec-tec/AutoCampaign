@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { withWorkflow } from 'workflow/next';
 const config: NextConfig = {
   output: process.env.VERCEL === '1' ? undefined : 'standalone',
   poweredByHeader: false,
@@ -23,4 +24,4 @@ const config: NextConfig = {
   },
   async headers() { return [{ source: '/:path*', headers: [{key:'X-Content-Type-Options',value:'nosniff'},{key:'Referrer-Policy',value:'same-origin'},{key:'X-Frame-Options',value:'DENY'}] }]; },
 };
-export default config;
+export default withWorkflow(config);

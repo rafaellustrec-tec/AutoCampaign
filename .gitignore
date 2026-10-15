@@ -8,3 +8,6 @@ artifacts/
 .cloudfy.json
 .vercel/
 .supabase/
+src/app/.well-known/workflow/
+.workflow-data/
+/.swc
