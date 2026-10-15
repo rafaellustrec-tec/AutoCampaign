@@ -6,6 +6,7 @@ import { requireRole } from './domain';
 import { AppError } from './domain';
 import { encrypt,decrypt,hash } from './security';
 import { metaLoginUrl,exchangeMetaCode } from './meta-login';
+import { googleLoginUrl,googleAccessibleAccounts,googleCustomerId } from './google-connection';
 type Platform='meta'|'google';
 type Connection={id:string;platform:Platform;credentials:string};
 type Credentials={access_token:string;refresh_token?:string;expires_at:number};
@@ -24,9 +25,11 @@ const callback=(platform:Platform)=>`${setting('APP_URL')}/api/oauth/${platform}
 const metaSettings=()=>({appId:setting('META_APP_ID'),apiVersion:setting('META_API_VERSION'),configId:setting('META_LOGIN_CONFIG_ID'),redirectUri:callback('meta')});
 export async function oauthStart(user:User,clientId:string,platform:Platform) {
   const state=randomBytes(32).toString('hex');
-  const target=platform==='meta'?metaLoginUrl(metaSettings(),state):new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  const target=platform==='meta'?metaLoginUrl(metaSettings(),state):googleLoginUrl(setting('GOOGLE_CLIENT_ID'),callback(platform),state);
   if(platform==='google') {
-    target.search=new URLSearchParams({client_id:setting('GOOGLE_CLIENT_ID'),redirect_uri:callback(platform),state,response_type:'code',scope:'https://www.googleapis.com/auth/adwords',access_type:'offline',prompt:'consent'}).toString();
+    setting('GOOGLE_CLIENT_SECRET');setting('GOOGLE_ADS_DEVELOPER_TOKEN');
+    if(!/^v\d+$/.test(setting('GOOGLE_ADS_API_VERSION')))throw new AppError(422,'Configure GOOGLE_ADS_API_VERSION, como v25.');
+    if(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID)googleCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
   }
   await db.query("INSERT INTO oauth_states(state_hash,user_id,client_id,platform,expires_at) VALUES($1,$2,$3,$4,now()+interval '10 minutes')",[hash(state),user.id,clientId,platform]);
   return NextResponse.redirect(target);
@@ -57,10 +60,10 @@ export async function accessToken(connection:Connection) {
     await db.query('UPDATE connections SET credentials=$2 WHERE id=$1',[connection.id,encrypt(JSON.stringify(creds))]); return creds.access_token;
   } catch(error) { if(error instanceof AppError&&error.status===422) await db.query("UPDATE connections SET status='reconnect' WHERE id=$1",[connection.id]); throw error; }
 }
-export async function googleRequest(token:string,path:string,body?:unknown,loginCustomerId?:string) {
+export async function googleRequest(token:string,path:string,body?:unknown,loginCustomerId?:string|null) {
   const headers:Record<string,string>={Authorization:`Bearer ${token}`,'developer-token':setting('GOOGLE_ADS_DEVELOPER_TOKEN'),'Content-Type':'application/json'};
-  const manager=loginCustomerId??process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
-  if(manager) headers['login-customer-id']=manager.replaceAll('-','');
+  const manager=loginCustomerId===null?undefined:loginCustomerId??process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+  if(manager) headers['login-customer-id']=googleCustomerId(manager);
   return providerJson(`https://googleads.googleapis.com/${setting('GOOGLE_ADS_API_VERSION')}/${path}`,{method:body?'POST':'GET',headers,body:body?JSON.stringify(body):undefined});
 }
 export async function listRemoteAccounts(connection:Connection) {
@@ -74,16 +77,7 @@ export async function listRemoteAccounts(connection:Connection) {
       for(const a of page.data??[]) accounts.push({externalId:a.id,name:a.name,currency:a.currency,timezone:a.timezone_name}); next=page.paging?.next;
     }
   } else {
-    const accessible=await googleRequest(token,'customers:listAccessibleCustomers');
-    const seen=new Set<string>();
-    for(const resource of accessible.resourceNames??[]) {
-      const customerId=resource.split('/')[1];
-      const rows=await googleRequest(token,`customers/${customerId}/googleAds:searchStream`,{query:'SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.time_zone, customer_client.manager FROM customer_client WHERE customer_client.status = ENABLED'},customerId);
-      for(const batch of rows) for(const row of batch.results??[]) {
-        const a=row.customerClient;if(a.manager||seen.has(a.id)) continue;seen.add(a.id);
-        accounts.push({externalId:a.id,name:a.descriptiveName||a.id,currency:a.currencyCode,timezone:a.timeZone});
-      }
-    }
+    return googleAccessibleAccounts((path,body,manager)=>googleRequest(token,path,body,manager),process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
   }
   return accounts;
 }

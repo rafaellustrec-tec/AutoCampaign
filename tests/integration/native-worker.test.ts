@@ -83,6 +83,41 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
   await t.test('lease expirado não recria tarefas automaticamente',async()=>{await fresh();job=await claimJob();await db.query("UPDATE jobs SET lease_until=now()-interval '1 second' WHERE id=$1",[job.id]);assert.equal(await claimJob(),null);assert.equal((await jobState(job.id)).status,'failed');assert.equal((await runJob(job)).status,'lost_lease');});
   await t.test('workflow reivindica somente seu job e não usa lock de sessão',async()=>{const {workflowAttempt}=await import('../../src/lib/workflow-runner');const a=await fresh(),b=await fresh();const first=(await db.query('SELECT id FROM jobs WHERE campaign_id=$1',[a.id])).rows[0];const second=(await db.query('SELECT id FROM jobs WHERE campaign_id=$1',[b.id])).rows[0];const before=calls.filter(c=>c.path.endsWith('/campaigns')).length;await Promise.all([workflowAttempt(second.id),workflowAttempt(second.id)]);assert.equal((await jobState(second.id)).status,'succeeded');assert.equal((await jobState(first.id)).status,'queued');assert.equal(calls.filter(c=>c.path.endsWith('/campaigns')).length,before+1);await workflowAttempt(first.id);assert.equal((await jobState(first.id)).status,'succeeded');const repeat=await workflowAttempt(second.id);assert.equal(repeat.status,'succeeded');assert.equal(repeat.waitMs,0);});
   await t.test('workflow conserva backoff, bloqueia ambiguidade e respeita flag',async()=>{const {workflowAttempt}=await import('../../src/lib/workflow-runner');const c=await fresh();const id=(await db.query('SELECT id FROM jobs WHERE campaign_id=$1',[c.id])).rows[0].id;process.env.ADS_PUBLISH_ENABLED='false';assert.equal((await workflowAttempt(id)).status,'disabled');assert.equal((await jobState(id)).attempts,0);process.env.ADS_PUBLISH_ENABLED='true';mode='rate-limit';const result=await workflowAttempt(id);assert.equal(result.status,'queued');assert.ok(result.waitMs>1000);assert.equal((await jobState(id)).attempts,1);await db.query('UPDATE jobs SET available_at=now() WHERE id=$1',[id]);mode='lost-response';assert.equal((await workflowAttempt(id)).status,'failed');const before=calls.length;mode='ok';assert.equal((await workflowAttempt(id)).status,'failed');assert.equal(calls.length,before);});
+  await t.test('Google OAuth vincula estado ao administrador, renova token e exige reconexão após revogação',async()=>{
+    const {oauthStart,oauthCallback,accessToken,listRemoteAccounts}=await import('../../src/lib/oauth');
+    const savedFetch=globalThis.fetch;const envKeys=['APP_URL','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_ADS_DEVELOPER_TOKEN','GOOGLE_ADS_API_VERSION','GOOGLE_ADS_LOGIN_CUSTOMER_ID'];
+    const savedEnv=Object.fromEntries(envKeys.map(key=>[key,process.env[key]]));let revoked=false;let tokenCalls=0;let refreshCalls=0;
+    Object.assign(process.env,{APP_URL:'https://example.com',GOOGLE_CLIENT_ID:'fixture.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET:'fixture-secret',GOOGLE_ADS_DEVELOPER_TOKEN:'fixture-developer',GOOGLE_ADS_API_VERSION:'v25'});delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    globalThis.fetch=async(input,init)=>{
+      const url=new URL(String(input));
+      if(url.hostname==='oauth2.googleapis.com'){
+        const form=new URLSearchParams(String(init?.body));tokenCalls++;
+        assert.equal(form.get('client_secret'),'fixture-secret');
+        if(form.get('grant_type')==='refresh_token'){refreshCalls++;assert.equal(form.get('refresh_token'),'fixture-refresh');return revoked?Response.json({error:'invalid_grant'},{status:400}):Response.json({access_token:'fixture-renewed',expires_in:3600});}
+        assert.equal(form.get('redirect_uri'),'https://example.com/api/oauth/google/callback');
+        return Response.json({access_token:'fixture-access',refresh_token:'fixture-refresh',expires_in:1});
+      }
+      assert.equal(url.hostname,'googleads.googleapis.com');
+      const headers=new Headers(init?.headers);assert.equal(headers.get('developer-token'),'fixture-developer');assert.equal(headers.get('Authorization'),'Bearer fixture-renewed');assert.equal(headers.get('login-customer-id'),null);
+      if(url.pathname.endsWith('customers:listAccessibleCustomers'))return Response.json({resourceNames:['customers/1234567890']});
+      assert.ok(url.pathname.endsWith('/googleAds:searchStream'));
+      return Response.json([{results:[{customer:{id:'1234567890',descriptiveName:'Google fixture',currencyCode:'BRL',timeZone:'America/Bahia',manager:false,status:'ENABLED'}}]}]);
+    };
+    try{
+      const start=await oauthStart(admin,client.id,'google');const location=new URL(start.headers.get('location')!);const state=location.searchParams.get('state')!;
+      assert.equal(location.searchParams.get('access_type'),'offline');
+      const request=new Request('https://example.com/api/oauth/google/callback?'+new URLSearchParams({state,code:'fixture-code'}));
+      await assert.rejects(oauthCallback(request,{...admin,id:randomUUID()},'google'),/cancelada ou expirada/);assert.equal(tokenCalls,0);
+      assert.equal((await oauthCallback(request,admin,'google')).status,307);
+      await assert.rejects(oauthCallback(request,admin,'google'),/cancelada ou expirada/);assert.equal(tokenCalls,1);
+      const connected=(await db.query("SELECT * FROM connections WHERE client_id=$1 AND platform='google'",[client.id])).rows[0];
+      assert.ok(connected);assert.ok(!connected.credentials.includes('fixture-refresh'));
+      const accounts=await listRemoteAccounts(connected);assert.equal(accounts[0].externalId,'1234567890');assert.equal(refreshCalls,1);
+      connected.credentials=encrypt(JSON.stringify({access_token:'fixture-expired',refresh_token:'fixture-refresh',expires_at:1}));
+      await db.query('UPDATE connections SET credentials=$2 WHERE id=$1',[connected.id,connected.credentials]);revoked=true;
+      await assert.rejects(accessToken(connected));assert.equal((await db.query('SELECT status FROM connections WHERE id=$1',[connected.id])).rows[0].status,'reconnect');
+    }finally{globalThis.fetch=savedFetch;for(const key of envKeys){if(savedEnv[key]===undefined)delete process.env[key];else process.env[key]=savedEnv[key];}}
+  });
  }finally{globalThis.fetch=originalFetch;await new Promise<void>(resolve=>storage.close(()=>resolve()));await db.end();await root.query(`DROP SCHEMA ${schema} CASCADE`);await root.end();}
 });
 

@@ -38,7 +38,6 @@ async function handler(request:Request,context:Context) {
   if(path[0]==='oauth') {
     if(method!=='GET') throw new AppError(405,'Método não permitido.');
     const provider=z.enum(['meta','google']).parse(path[1]);
-    if(provider!=='meta')throw new AppError(422,'Esta versão conecta somente Meta Ads para WhatsApp.');
     if(path[2]==='callback') return await oauthCallback(request,user,provider);
     requireRole(user.role,[]); const clientId=uuid.parse(url.searchParams.get('clientId')); await requireClient(user,clientId); return await oauthStart(user,clientId,provider);
   }
