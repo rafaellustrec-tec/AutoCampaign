@@ -1,8 +1,9 @@
 import { Pool, type PoolClient } from 'pg';
+import { databaseConnectionConfig } from './database-config';
 const globalDb = globalThis as unknown as { agencyPool?: Pool };
 const poolMax=Number(process.env.DB_POOL_MAX??(process.env.VERCEL==='1'?'2':'12'));
 if(!Number.isInteger(poolMax)||poolMax<1||poolMax>50)throw new Error('DB_POOL_MAX deve ser um inteiro entre 1 e 50.');
-const pool = globalDb.agencyPool ?? new Pool({ connectionString: process.env.DATABASE_URL, max: poolMax, connectionTimeoutMillis:10000, idleTimeoutMillis:30000 });
+const pool = globalDb.agencyPool ?? new Pool({ ...databaseConnectionConfig(process.env.DATABASE_URL), max: poolMax, connectionTimeoutMillis:10000, idleTimeoutMillis:30000 });
 if (process.env.NODE_ENV !== 'production') globalDb.agencyPool = pool;
 const configuredSchema=()=>process.env.DB_SCHEMA||(process.env.VERCEL==='1'?'autocampaign':undefined);
 async function selectSchema(tx:PoolClient) {

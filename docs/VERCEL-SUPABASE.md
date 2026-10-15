@@ -44,6 +44,8 @@ As migrações criam tabelas no schema padrão, incluindo `public.users`, que é
 
 Para o painel na Vercel, copiar a URL do **Transaction pooler** em Connect no dashboard e usar em `DATABASE_URL`, com TLS e certificado válidos. Não desabilitar validação de certificado. Não usar prepared statements nomeados. O limite local é de duas conexões por instância na Vercel, configurável por `DB_POOL_MAX`; considerar a soma de instâncias no dimensionamento do banco.
 
+O driver identifica hosts PostgreSQL `.supabase.co`/`.supabase.com` e usa a CA pública Supabase Root 2021, com certificado e hostname verificados. Os parâmetros SSL da URL são removidos nesse caminho para não substituir a configuração TLS explícita. A CA está em `src/lib/supabase-ca.ts`, distribuída pela Supabase e com fingerprint documentado no arquivo; sua validade termina em abril de 2031. Atualizar se o provedor trocar a autoridade. Conexões locais mantêm a configuração original.
+
 Para migração, usar uma conexão direta ou Session pooler acessível pela máquina de provisionamento. O worker nativo atual também exige conexão direta/Session pooler por usar advisory lock de sessão; não executá-lo no Transaction pooler.
 
 Provisionar com Node 24 e variáveis secretas em `.env.local` ignorado:
