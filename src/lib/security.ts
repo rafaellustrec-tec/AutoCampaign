@@ -1,0 +1,8 @@
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
+export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+export function passwordHash(password: string) { const salt = randomBytes(16).toString('hex'); return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`; }
+export function passwordMatches(password: string, stored: string) { const [salt, digest] = stored.split(':'); if (!salt || !digest) return false; const actual = scryptSync(password, salt, 64); const expected = Buffer.from(digest, 'hex'); return actual.length === expected.length && timingSafeEqual(actual, expected); }
+export function secretMatches(actual: string, expected: string | undefined) { if (!expected || expected.length < 32) return false; return timingSafeEqual(Buffer.from(hash(actual)), Buffer.from(hash(expected))); }
+function key() { const value = Buffer.from(process.env.ENCRYPTION_KEY ?? '', 'base64'); if (value.length !== 32) throw new Error('ENCRYPTION_KEY deve conter 32 bytes em base64.'); return value; }
+export function encrypt(value: string) { const iv = randomBytes(12); const cipher = createCipheriv('aes-256-gcm', key(), iv); const data = Buffer.concat([cipher.update(value,'utf8'),cipher.final()]); return [iv,cipher.getAuthTag(),data].map(b=>b.toString('base64')).join('.'); }
+export function decrypt(value: string) { const [iv,tag,data] = value.split('.').map(v=>Buffer.from(v,'base64')); const cipher = createDecipheriv('aes-256-gcm',key(),iv); cipher.setAuthTag(tag); return Buffer.concat([cipher.update(data),cipher.final()]).toString('utf8'); }

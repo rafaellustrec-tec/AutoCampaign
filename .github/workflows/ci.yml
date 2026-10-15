@@ -1,0 +1,29 @@
+name: Verify
+on: [push, pull_request]
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: agency
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: agency_tests
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U agency -d agency_tests"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://agency:test-only-password@127.0.0.1:5432/agency_tests
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build

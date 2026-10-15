@@ -1,0 +1,36 @@
+import { chromium } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+await mkdir('artifacts',{recursive:true});
+const browser=await chromium.launch({channel:'chrome',headless:true});
+const base=process.env.UI_BASE_URL??'http://127.0.0.1:3217';
+try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ const response=await page.goto(`${base}/demo`,{waitUntil:'networkidle'});
+ console.log('Página demo:',response?.status(),await page.title());
+ await page.screenshot({path:'artifacts/ui-initial.png',fullPage:true});
+ console.log((await page.locator('body').innerText()).slice(0,400));
+ await page.getByRole('heading',{name:'Tudo em órbita, Rafael.'}).waitFor();
+ await page.screenshot({path:'artifacts/dashboard-desktop.png',fullPage:true});
+ await page.getByRole('button',{name:'＋ Campanha WhatsApp'}).click();
+ await page.getByRole('heading',{name:'Nova campanha de WhatsApp'}).waitFor();
+ await page.getByLabel('WhatsApp com DDI').fill('+55 71 99999-9999');
+ assert.equal(await page.getByLabel('Destino gerado para conferência').inputValue(),'https://wa.me/5571999999999');
+ assert.equal(await page.getByRole('button',{name:'Salvar briefing'}).isDisabled(),true);
+ assert.equal(await page.getByText('Google Pesquisa',{exact:true}).count(),0);
+ await page.screenshot({path:'artifacts/whatsapp-form.png',fullPage:true});
+ await page.getByRole('button',{name:'Fechar formulário'}).click();
+ await page.getByRole('navigation').getByRole('button',{name:'Aprovações'}).click();
+ await page.getByRole('heading',{name:'Fila de aprovação'}).waitFor();
+ await page.getByRole('button',{name:'Revisar ↗'}).first().click();
+ assert.equal(await page.getByRole('button',{name:'Aprovar estrutura'}).isDisabled(),true);
+ await page.getByRole('button',{name:'Fechar revisão'}).click();
+ await page.setViewportSize({width:390,height:844});
+ await page.getByRole('navigation').getByRole('button',{name:'Visão geral'}).click();
+ await page.screenshot({path:'artifacts/dashboard-mobile.png',fullPage:true});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'layout não deve transbordar no celular');
+ await page.goto(`${base}/`,{waitUntil:'networkidle'});
+ await page.getByRole('heading',{name:'Acesse seu workspace'}).waitFor();
+ assert.deepEqual(errors,[],'sem erros de execução no navegador');
+ console.log('UI: desktop, celular, navegação, revisão e login aprovados.');
+}finally{await browser.close();}
