@@ -28,6 +28,16 @@ Se a API retornar `dispatchPending=true`, o job continua durável no banco, agua
 
 ## Supabase: banco
 
+### Instalação remota verificada em 15/10/2026
+
+O projeto AutoCampaign já possuía tabelas `public.jobs`, `public.members`, `public.projects` e `public.versions`. Para evitar conflitos, a aplicação foi instalada no schema privado **`autocampaign`**. Foram aplicadas quatro migrações, criando 20 tabelas com RLS, sem acesso de `anon`/`authenticated` ao schema. O bucket privado `agency-assets` foi criado com limite de 30 MB. Os objetos preexistentes foram preservados.
+
+Na Vercel, configurar **`DB_SCHEMA=autocampaign`** (também é o padrão quando `VERCEL=1`). A aplicação define e verifica o schema em cada transação, sem incluir `public` como fallback. Isso também vale para consultas simples e funciona com o Transaction pooler. Não alterar globalmente o `search_path` do usuário `postgres`, pois o projeto já contém outra estrutura.
+
+A instalação do banco não configura automaticamente `DATABASE_URL`, credenciais S3, `ENCRYPTION_KEY`, `CRON_SECRET` ou o administrador da aplicação na Vercel. Esses passos permanecem necessários antes de testar login e uploads reais.
+
+O advisor retornou avisos de funções `SECURITY DEFINER` na estrutura preexistente de `public`, além de índices de FKs ausentes. Não foram alteradas funções ou políticas desse outro sistema. A ausência de políticas nas tabelas privadas de `autocampaign` é intencional: somente o backend, com o papel proprietário, deve acessá-las. Referências: [funções públicas privilegiadas](https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable), [índices de FKs](https://supabase.com/docs/guides/database/database-linter?lint=0001_unindexed_foreign_keys).
+
 Usar projeto exclusivo para a aplicação. O sistema usa `pg` e autenticação própria; não precisa de chave `anon`, `service_role` ou Supabase Auth no navegador.
 
 As migrações criam tabelas no schema padrão, incluindo `public.users`, que é diferente de `auth.users`. A migração `004_backend_only_rls.sql` habilita RLS nas tabelas da aplicação sem políticas públicas. A conexão do backend precisa usar o proprietário das tabelas ou um papel de servidor apropriado; `anon` e `authenticated` não acessam esses dados. As permissões por cliente continuam aplicadas pelo backend Next.js. Usar projeto exclusivo; opcionalmente desabilitar sua Data API. Não alterar a Data API de um projeto compartilhado com outros sistemas.
@@ -45,7 +55,7 @@ node --env-file=.env.local --import tsx scripts/create-user.ts email@agencia.com
 
 O segundo comando exige `INITIAL_PASSWORD` temporária no ambiente. Remover depois de criar o administrador.
 
-Alternativa quando só houver acesso ao SQL Editor do projeto: executar `node scripts/prepare-supabase.mjs` e aplicar `artifacts/supabase-bootstrap.sql` com o proprietário do banco. O arquivo inclui as quatro migrações e registra `schema_migrations` na mesma transação; pode ser reaplicado e permanece compatível com o migrador CLI. Não contém credenciais. Ainda é necessário configurar `DATABASE_URL` no servidor e criar o administrador pelo comando de provisionamento.
+Para uma nova instalação isolada, definir `DB_SCHEMA=autocampaign` ao executar `node scripts/prepare-supabase.mjs`. O resultado é `artifacts/supabase-autocampaign-bootstrap.sql`. Sem `DB_SCHEMA`, o script gera o arquivo genérico no schema da conexão; não usar esse arquivo genérico no projeto remoto que contém tabelas conflitantes. O arquivo registra `schema_migrations` na mesma transação, pode ser reaplicado e permanece compatível com o migrador CLI. Não contém credenciais. No migrador CLI, o schema precisa já existir. A instalação remota acima já foi aplicada; não é necessário executá-la manualmente.
 
 ## Supabase: imagens
 
