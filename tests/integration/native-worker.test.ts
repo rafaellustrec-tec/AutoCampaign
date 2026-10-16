@@ -152,6 +152,30 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
       await assert.rejects(accessToken(connected));assert.equal((await db.query('SELECT status FROM connections WHERE id=$1',[connected.id])).rows[0].status,'reconnect');
     }finally{globalThis.fetch=savedFetch;for(const key of envKeys){if(savedEnv[key]===undefined)delete process.env[key];else process.env[key]=savedEnv[key];}}
   });
+  await t.test('carteira agrega sem multiplicar totais, isola perfis e omite segredos',async()=>{
+    const {portfolioOverview}=await import('../../src/lib/portfolio');
+    const a=(await db.query("INSERT INTO clients(name) VALUES('Portfolio Clínica A') RETURNING id")).rows[0];
+    const b=(await db.query("INSERT INTO clients(name) VALUES('Portfolio Clínica B') RETURNING id")).rows[0];
+    const empty=(await db.query("INSERT INTO clients(name) VALUES('Portfolio Sem Conta') RETURNING id")).rows[0];
+    await db.query('INSERT INTO client_members(client_id,user_id) VALUES($1,$2),($1,$3)',[a.id,operator.id,approver.id]);
+    const connection=(await db.query("INSERT INTO connections(platform,credentials,status,import_status) VALUES('meta','private-fixture-token','reconnect','error') RETURNING id")).rows[0];
+    for(let i=0;i<2;i++)await db.query("INSERT INTO ad_accounts(client_id,connection_id,platform,external_id,name,currency,timezone) VALUES($1,$2,'meta',$3,'Fixture','BRL','America/Bahia')",[a.id,connection.id,`portfolio_${i}`]);
+    const active=(await db.query("INSERT INTO campaigns(client_id,name,created_by,status,version) VALUES($1,'Ativa',$2,'active',2) RETURNING id",[a.id,admin.id])).rows[0];
+    const proposed=(await db.query("INSERT INTO campaigns(client_id,name,created_by,status) VALUES($1,'Revisar',$2,'proposed') RETURNING id",[a.id,admin.id])).rows[0];
+    await db.query("INSERT INTO campaigns(client_id,name,created_by,status) VALUES($1,'Restricted campaign',$2,'proposed')",[b.id,admin.id]);
+    await db.query("INSERT INTO jobs(client_id,campaign_id,version,kind,status,error) VALUES($1,$2,1,'create','failed','raw-secret-error'),($1,$2,2,'create','failed','raw-secret-error')",[a.id,active.id]);
+    await db.query("INSERT INTO external_objects(campaign_id,version,account_id,object_key,external_id,kind,delivery_status) SELECT $1,1,id,'rejected','id','ad','REJECTED' FROM ad_accounts WHERE client_id=$2",[proposed.id,a.id]);
+    await db.query("INSERT INTO audit_log(client_id,user_id,action,entity_id,detail) VALUES($1,$3,'briefing.saved','fixture','{\"private\":\"audit-secret\"}'),($2,$3,'client.created','fixture','{}')",[a.id,b.id,operator.id]);
+    const adminView=await portfolioOverview(admin),operatorView=await portfolioOverview(operator),approverView=await portfolioOverview(approver);
+    const row=adminView.clients.find(c=>c.id===a.id)!;
+    assert.equal(row.accountCount,2);assert.equal(row.connectionIssues,2);assert.equal(row.campaignCount,2);assert.equal(row.reviewCount,1);assert.equal(row.activeCampaigns,1);assert.equal(row.failedJobs,1);assert.equal(row.errorCampaigns,1);
+    assert.ok(adminView.clients.some(c=>c.id===b.id));assert.equal(adminView.clients.find(c=>c.id===empty.id)?.accountCount,0);
+    for(const view of [operatorView,approverView]){assert.ok(view.clients.some(c=>c.id===a.id));assert.ok(!view.clients.some(c=>c.id===b.id||c.id===empty.id));assert.ok(!view.activity.some(e=>e.clientId===b.id));}
+    assert.ok(operatorView.activity.some(e=>e.clientId===a.id&&e.action==='briefing.saved'));
+    assert.ok(!JSON.stringify(adminView).includes('private-fixture-token'));assert.ok(!JSON.stringify(adminView).includes('raw-secret-error'));assert.ok(!JSON.stringify(adminView).includes('audit-secret'));
+    const stranger=await portfolioOverview({...operator,id:randomUUID()});assert.deepEqual(stranger.clients,[]);assert.deepEqual(stranger.activity,[]);
+    await db.query("INSERT INTO audit_log(client_id,action) SELECT $1,'fixture' FROM generate_series(1,55)",[a.id]);assert.equal((await portfolioOverview(operator)).activity.length,50);
+  });
  }finally{globalThis.fetch=originalFetch;await new Promise<void>(resolve=>storage.close(()=>resolve()));await db.end();await root.query(`DROP SCHEMA ${schema} CASCADE`);await root.end();}
 });
 

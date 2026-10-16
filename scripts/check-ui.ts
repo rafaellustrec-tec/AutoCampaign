@@ -10,8 +10,9 @@ try{
  console.log('Página demo:',response?.status(),await page.title());
  await page.screenshot({path:'artifacts/ui-initial.png',fullPage:true});
  console.log((await page.locator('body').innerText()).slice(0,400));
- await page.getByRole('heading',{name:'Tudo em órbita, Rafael.'}).waitFor();
+ await page.getByRole('heading',{name:'Sua carteira, em um só lugar.'}).waitFor();
  await page.screenshot({path:'artifacts/dashboard-desktop.png',fullPage:true});
+ await page.getByRole('navigation').getByRole('button',{name:'Campanhas'}).click();
  await page.getByRole('button',{name:'＋ Criar campanha WhatsApp'}).click();
  await page.getByRole('heading',{name:'Criar campanha WhatsApp'}).waitFor();
  await page.getByText('Configurações avançadas',{exact:true}).click();
