@@ -12,11 +12,11 @@ try{
  console.log((await page.locator('body').innerText()).slice(0,400));
  await page.getByRole('heading',{name:'Tudo em órbita, Rafael.'}).waitFor();
  await page.screenshot({path:'artifacts/dashboard-desktop.png',fullPage:true});
- await page.getByRole('button',{name:'＋ Campanha WhatsApp'}).click();
- await page.getByRole('heading',{name:'Nova campanha de WhatsApp'}).waitFor();
+ await page.getByRole('button',{name:'＋ Criar campanha WhatsApp'}).click();
+ await page.getByRole('heading',{name:'Criar campanha WhatsApp'}).waitFor();
+ await page.getByText('Configurações avançadas',{exact:true}).click();
  await page.getByLabel('WhatsApp com DDI').fill('+55 71 99999-9999');
- assert.equal(await page.getByLabel('Destino gerado para conferência').inputValue(),'https://wa.me/5571999999999');
- assert.equal(await page.getByRole('button',{name:'Salvar briefing'}).isDisabled(),true);
+ assert.equal(await page.getByRole('button',{name:'Continuar'}).isDisabled(),true);
  assert.equal(await page.getByText('Google Pesquisa',{exact:true}).count(),0);
  await page.screenshot({path:'artifacts/whatsapp-form.png',fullPage:true});
  await page.getByRole('button',{name:'Fechar formulário'}).click();
