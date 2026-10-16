@@ -28,7 +28,7 @@ export async function oauthStart(user:User,clientId:string|null,platform:Platfor
   const state=randomBytes(32).toString('hex');
   const target=platform==='meta'?metaLoginUrl(metaSettings(),state):googleLoginUrl(setting('GOOGLE_CLIENT_ID'),callback(platform),state);
   if(platform==='google') {
-    setting('GOOGLE_CLIENT_SECRET');setting('GOOGLE_ADS_DEVELOPER_TOKEN');
+    setting('GOOGLE_CLIENT_SECRET');
     if(!/^v\d+$/.test(setting('GOOGLE_ADS_API_VERSION')))throw new AppError(422,'Configure GOOGLE_ADS_API_VERSION, como v25.');
     if(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID)googleCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
   }
@@ -65,7 +65,7 @@ export async function accessToken(connection:Connection) {
   } catch(error) { if(error instanceof AppError&&error.status===422) await db.query("UPDATE connections SET status='reconnect' WHERE id=$1",[connection.id]); throw error; }
 }
 export async function googleRequest(token:string,path:string,body?:unknown,loginCustomerId?:string|null) {
-  const headers:Record<string,string>={Authorization:`Bearer ${token}`,'developer-token':setting('GOOGLE_ADS_DEVELOPER_TOKEN'),'Content-Type':'application/json'};
+  const headers:Record<string,string>={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
   const manager=loginCustomerId===null?undefined:loginCustomerId??process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
   if(manager) headers['login-customer-id']=googleCustomerId(manager);
   return providerJson(`https://googleads.googleapis.com/${setting('GOOGLE_ADS_API_VERSION')}/${path}`,{method:body?'POST':'GET',headers,body:body?JSON.stringify(body):undefined});

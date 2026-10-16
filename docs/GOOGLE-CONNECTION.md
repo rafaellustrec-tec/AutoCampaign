@@ -11,7 +11,7 @@ Production environment:
 
 - `GOOGLE_CLIENT_ID`: a Google Cloud OAuth client of type Web application.
 - `GOOGLE_CLIENT_SECRET`: its secret.
-- `GOOGLE_ADS_DEVELOPER_TOKEN`: the agency's Ads API developer token.
+- API access is granted to the Google Cloud project owning the OAuth client. Developer tokens were retired on September 9, 2026; the connector neither requires nor sends them.
 - `GOOGLE_ADS_API_VERSION=v25`: independent of the Meta API version.
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID`: optional ten-digit manager/MCC ID. When provided,
   account discovery is restricted to this hierarchy; otherwise discover all directly
@@ -35,7 +35,7 @@ reconnection. API project/token access levels must permit the target account typ
 5. Link only the intended client's account. Confirm it cannot be linked to another client.
 6. Verify refresh-token renewal and revoked-access handling during integration testing.
 
-OAuth success alone does not certify developer-token/project API access. Real validation
+OAuth success alone does not certify Google Cloud project API access. Real validation
 requires a successful `customers:listAccessibleCustomers` call followed by account
 metadata reads. These reads create no ads. Discovery does not send `login-customer-id`;
 queries through a manager use that manager as context. No tokens are exposed in the UI.
@@ -44,3 +44,7 @@ References:
 - https://developers.google.com/google-ads/api/docs/account-management/listing-accounts
 - https://developers.google.com/google-ads/api/rest/auth
 - https://developers.google.com/identity/protocols/oauth2/web-server
+
+The authorized redirect URI must exactly match `https://autocampaign-tan.vercel.app/api/oauth/google/callback` for production. OAuth credentials remain server-only. Configuration and a successful authorization redirect do not prove Google Ads access: the account owner must complete consent, then account discovery must succeed. API enablement and production access are managed in the same Google Cloud project.
+
+Migration reference: https://developers.google.com/google-ads/api/docs/api-policy/developer-token

@@ -15,7 +15,7 @@ export function googleCustomerId(value:string) {
 type Request=(path:string,body?:unknown,manager?:string|null)=>Promise<any>;
 type Account={externalId:string;name:string;currency:string;timezone:string};
 export async function googleAccessibleAccounts(request:Request,managerId?:string) {
-  // Discovery is based on OAuth access, not on the developer-token owner/MCC.
+  // Discovery is based on OAuth access, not on a legacy developer-token owner or an assumed MCC.
   const accessible=await request('customers:listAccessibleCustomers',undefined,null);
   const roots=managerId?[googleCustomerId(managerId)]:(accessible.resourceNames??[]).map((resource:string)=>{
     if(!/^customers\/\d{10}$/.test(resource))throw new AppError(502,'Identificador de conta Google inválido.');

@@ -120,7 +120,7 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
     const {oauthStart,oauthCallback,accessToken,listRemoteAccounts}=await import('../../src/lib/oauth');
     const savedFetch=globalThis.fetch;const envKeys=['APP_URL','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_ADS_DEVELOPER_TOKEN','GOOGLE_ADS_API_VERSION','GOOGLE_ADS_LOGIN_CUSTOMER_ID'];
     const savedEnv=Object.fromEntries(envKeys.map(key=>[key,process.env[key]]));let revoked=false;let tokenCalls=0;let refreshCalls=0;
-    Object.assign(process.env,{APP_URL:'https://example.com',GOOGLE_CLIENT_ID:'fixture.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET:'fixture-secret',GOOGLE_ADS_DEVELOPER_TOKEN:'fixture-developer',GOOGLE_ADS_API_VERSION:'v25'});delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    Object.assign(process.env,{APP_URL:'https://example.com',GOOGLE_CLIENT_ID:'fixture.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET:'fixture-secret',GOOGLE_ADS_API_VERSION:'v25'});delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;delete process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
     globalThis.fetch=async(input,init)=>{
       const url=new URL(String(input));
       if(url.hostname==='oauth2.googleapis.com'){
@@ -131,7 +131,7 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
         return Response.json({access_token:'fixture-access',refresh_token:'fixture-refresh',expires_in:1});
       }
       assert.equal(url.hostname,'googleads.googleapis.com');
-      const headers=new Headers(init?.headers);assert.equal(headers.get('developer-token'),'fixture-developer');assert.equal(headers.get('Authorization'),'Bearer fixture-renewed');assert.equal(headers.get('login-customer-id'),null);
+      const headers=new Headers(init?.headers);assert.equal(headers.get('developer-token'),null);assert.equal(headers.get('Authorization'),'Bearer fixture-renewed');assert.equal(headers.get('login-customer-id'),null);
       if(url.pathname.endsWith('customers:listAccessibleCustomers'))return Response.json({resourceNames:['customers/1234567890']});
       assert.ok(url.pathname.endsWith('/googleAds:searchStream'));
       return Response.json([{results:[{customer:{id:'1234567890',descriptiveName:'Google fixture',currencyCode:'BRL',timeZone:'America/Bahia',manager:false,status:'ENABLED'}}]}]);

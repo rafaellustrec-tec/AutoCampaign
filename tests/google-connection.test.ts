@@ -54,7 +54,7 @@ test('explicit MCC restricts discovery to that hierarchy and failures are not hi
   await assert.rejects(googleAccessibleAccounts(async()=>{throw Error('quota fixture');}),/quota fixture/);
   await assert.rejects(googleAccessibleAccounts(async()=>({resourceNames:['customers/invalid']})),/Identificador/);
 });
-test('Google REST keeps developer token server-side and suppresses default MCC for discovery',async()=>{
+test('Google REST uses Cloud project OAuth without developer tokens and suppresses MCC for discovery',async()=>{
   const previous={version:process.env.GOOGLE_ADS_API_VERSION,developer:process.env.GOOGLE_ADS_DEVELOPER_TOKEN,manager:process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID};
   const fetch=globalThis.fetch;const calls:any[]=[];
   try{
@@ -63,12 +63,13 @@ test('Google REST keeps developer token server-side and suppresses default MCC f
     await googleRequest('fixture-access','customers:listAccessibleCustomers',undefined,null);
     assert.equal(calls[0].url.hostname,'googleads.googleapis.com');
     assert.equal(calls[0].url.pathname,'/v25/customers:listAccessibleCustomers');
-    assert.equal(calls[0].headers.get('developer-token'),'fixture-developer');
+    assert.equal(calls[0].headers.get('developer-token'),null);
+    delete process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
     assert.equal(calls[0].headers.get('login-customer-id'),null);
     assert.equal(calls[0].headers.get('Authorization'),'Bearer fixture-access');
     await googleRequest('fixture-access',`customers/${leaf.id}/googleAds:searchStream`,{query:'SELECT customer.id FROM customer'});
     assert.equal(calls[1].headers.get('login-customer-id'),manager.id);
-    assert.equal(calls[1].method,'POST');
+    assert.equal(calls[1].method,'POST');assert.equal(calls[1].headers.get('developer-token'),null);
   }finally{
     globalThis.fetch=fetch;
     for(const [key,value] of Object.entries({GOOGLE_ADS_API_VERSION:previous.version,GOOGLE_ADS_DEVELOPER_TOKEN:previous.developer,GOOGLE_ADS_LOGIN_CUSTOMER_ID:previous.manager})){
