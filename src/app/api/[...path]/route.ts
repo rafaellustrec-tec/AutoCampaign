@@ -11,6 +11,7 @@ import { dispatchCampaignJob,dispatchWorkflow } from '@/lib/workflow-dispatch';
 import { uploadUrl,freezeUpload,storePdf,downloadUrl } from '@/lib/storage';
 import { oauthStart,oauthCallback,listRemoteAccounts } from '@/lib/oauth';
 import { synchronizeAccounts,savedAccounts,assignAccounts } from '@/lib/account-registry';
+import { publicationCapabilities } from '@/lib/publication-policy';
 import { portfolioOverview } from '@/lib/portfolio';
 import { reportPdf,reportData,reportConfigSchema,reportLogo } from '@/lib/reports';
 export const runtime='nodejs';
@@ -37,6 +38,7 @@ async function handler(request:Request,context:Context) {
   }
   const user=await requireUser();
   if(path.join('/')==='auth/logout'&&method==='POST') { const jar=await cookies(); const token=jar.get('agency_session')?.value; if(token) await db.query('DELETE FROM sessions WHERE id_hash=$1',[hash(token)]); jar.delete('agency_session'); return NextResponse.json({ok:true}); }
+  if(path.length===1&&path[0]==='publication-policy'&&method==='GET')return NextResponse.json(publicationCapabilities(),{headers:{'Cache-Control':'private, no-store'}});
   if(path.length===1&&path[0]==='portfolio'&&method==='GET')return NextResponse.json(await portfolioOverview(user),{headers:{'Cache-Control':'private, no-store'}});
   if(path[0]==='me'&&method==='GET') return NextResponse.json(user);
   if(path[0]==='oauth') {

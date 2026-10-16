@@ -47,3 +47,9 @@ Na Vercel, `campaignWorkflow(jobId)` chama uma etapa que reivindica o job por ID
 ## Compatibilidade futura
 
 Dados antigos de Google, relatórios e métricas são preservados. O módulo de relatórios ainda possui endpoints autenticados `/clients/:id/reports`, `/reports/pdf` e `/reports/history`, mas não participa do fluxo inicial nem tem coleta automática configurada. Não considerar esses dados atualizados sem uma coleta explícita. A evolução desses módulos fica para uma etapa posterior.
+
+### Disponibilidade da publicação
+
+`GET /api/publication-policy` exige sessão e retorna apenas `creationEnabled` e `activationEnabled`, com cache privado desabilitado. A ativação só é apresentada como disponível quando as duas flags do servidor estão habilitadas. O endpoint não altera permissões nem enfileira trabalhos.
+
+A revisão explica bloqueios, mantém os botões indisponíveis durante a verificação e exibe erros dentro da janela. A validação do servidor e os bloqueios do worker permanecem obrigatórios, independentemente da interface.
