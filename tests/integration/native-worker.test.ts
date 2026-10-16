@@ -21,7 +21,7 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
    if(mode==='auth')return Response.json({error:{message:'fixture'}},{status:401});
    return Response.json({id:'100',name:'Página teste',whatsapp_number:mode==='wrong-phone'?'5511999999999':'5571999999999'});
   }
-  const body=new URLSearchParams(String(init.body));calls.push({path:u.pathname,body});
+  const body=new URLSearchParams(String(init.body));if(body.get('execution_options')?.includes('validate_only'))return Response.json({success:true});calls.push({path:u.pathname,body});
   if(mode==='lost-response')throw new TypeError('Resposta perdida após mutação');
   if(u.pathname.endsWith('/adimages'))return Response.json({images:{image:{hash:'image-hash'}}});
   if(['/campaigns','/adsets','/adcreatives','/ads'].some(s=>u.pathname.endsWith(s)))return Response.json({id:String(++sequence)});

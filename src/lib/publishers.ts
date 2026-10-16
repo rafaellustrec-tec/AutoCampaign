@@ -69,7 +69,7 @@ export function accountTimestamp(date:string,time:string,timezone:string) {
 export function metaWhatsAppPayloads(briefing:Briefing,c:Channel,currency:string,timezone:string,marker:string) {
  const link=whatsappDestination(c.whatsappNumber??'',c.whatsappMessage);
  return {
-  campaign:{name:`${briefing.name} [${marker}]`,objective:'OUTCOME_ENGAGEMENT',status:'PAUSED',special_ad_categories:[]},
+  campaign:{name:`${briefing.name} [${marker}]`,objective:'OUTCOME_ENGAGEMENT',status:'PAUSED',special_ad_categories:[],is_adset_budget_sharing_enabled:false},
   adset:{name:`${marker} / WhatsApp`,status:'PAUSED',daily_budget:minorUnits(c.dailyBudget,currency),billing_event:'IMPRESSIONS',optimization_goal:'CONVERSATIONS',destination_type:'WHATSAPP',bid_strategy:'LOWEST_COST_WITHOUT_CAP',start_time:accountTimestamp(briefing.startDate,'00:00:00',timezone),end_time:accountTimestamp(briefing.endDate,'23:59:59',timezone),promoted_object:{page_id:c.pageId},targeting:{geo_locations:{cities:[{key:c.geoTargetId}]},age_min:c.ageMin??18,age_max:c.ageMax??65}},
   linkData:{link,message:briefing.offer,name:briefing.name,call_to_action:{type:'WHATSAPP_MESSAGE',value:{app_destination:'WHATSAPP',link,whatsapp_number:c.whatsappNumber}}},
  };
@@ -84,7 +84,9 @@ async function createMeta(job:Job,account:Account,briefing:Briefing,c:Channel,to
  await verifyPageWhatsApp(job,account.id,c.pageId!,c.whatsappNumber!,page.whatsapp_number);
  if(c.kind==='meta_form'){if(!/^\d+$/.test(c.formId??''))throw new AppError(422,'ID de formulário inválido.');const form=await meta(token,`${c.formId}?fields=id,status,page`);if(form.page?.id!==c.pageId||form.status!=='ACTIVE')throw new AppError(422,'Formulário indisponível ou de outra página.');}
  const payloads=metaWhatsAppPayloads(briefing,c,account.currency,account.timezone,marker);
+ await meta(token,`${act}/campaigns`,{...payloads.campaign,execution_options:['validate_only']});
  const [campaign]=await operation(job,account,'meta-campaign',async()=>{const result=await meta(token,`${act}/campaigns`,payloads.campaign);return [{key:'meta-campaign',id:result.id,kind:'campaign'}];});
+ await meta(token,`${act}/adsets`,{...payloads.adset,campaign_id:campaign.id,execution_options:['validate_only']});
  const [adset]=await operation(job,account,'meta-adset',async()=>{const result=await meta(token,`${act}/adsets`,{...payloads.adset,campaign_id:campaign.id});return [{key:'meta-adset',id:result.id,kind:'adset'}];});
  for(const variant of metaCreativeVariants(c,briefing.name,briefing.offer)) {
    const assetId=variant.assetId;const variantKey=variant.id;
