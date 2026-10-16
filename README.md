@@ -59,3 +59,5 @@ Preparar campanhas cria propostas internas por frente/canal em uma transação, 
 Regras nesta entrega são critérios e agenda de revisão humana, com registro em auditoria e próxima data. Não executam testes, rotação, escala de verba ou decisões automáticas. Imagens vêm da biblioteca do cliente e recebem URLs de prévia privadas e temporárias. Contas precisam estar vinculadas em Conexões. Configurações conhecidas do último briefing são reaproveitadas; IDs e elegibilidade ainda precisam de conferência.
 
 `node scripts/check-strategy-flow.mjs` testa o fluxo completo no navegador, com dados e mutações de produto simulados; usa sessão autorizada e verifica os bloqueios reais de publicação. Não cria anúncios reais.
+
+A liberação de um piloto pode usar `ADS_PUBLISH_CAMPAIGN_IDS` com UUIDs separados por vírgula. Quando definida, a API e o conector recusam criação para campanhas fora dessa lista; vazia ou inválida bloqueia todas. Isso não aprova versões nem autoriza ativação. `ADS_ACTIVATION_ENABLED=false` mantém a ativação bloqueada independentemente da criação.

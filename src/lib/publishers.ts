@@ -1,5 +1,5 @@
 import { db,transaction } from './db';
-import { requireActivationEnabled } from './publication-policy';
+import { requireActivationEnabled,requireCreationAllowed } from './publication-policy';
 import { AppError,campaignBriefingSchema,metaCreativeVariants,type Briefing,whatsappDestination } from './domain';
 import { accessToken,googleRequest,providerJson } from './oauth';
 import { assetBytes } from './storage';
@@ -95,6 +95,7 @@ async function createMeta(job:Job,account:Account,briefing:Briefing,c:Channel,to
  }
 }
 export async function executePublication(job:Job) {
+ if(job.kind==='create')requireCreationAllowed(job.campaign_id);
  requireActivationEnabled(job.kind);
  if(process.env.ADS_PUBLISH_ENABLED!=='true')throw new AppError(422,'Publicação externa desabilitada.');
  const version=(await db.query('SELECT briefing FROM campaign_versions WHERE campaign_id=$1 AND version=$2',[job.campaign_id,job.version])).rows[0];const briefing=campaignBriefingSchema.parse(version.briefing);

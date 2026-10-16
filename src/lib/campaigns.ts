@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { requireActivationEnabled } from './publication-policy';
+import { requireActivationEnabled,requireCreationAllowed } from './publication-policy';
 import { transaction } from './db';
 import { requireClient,type User } from './auth';
 import { AppError,campaignBriefingSchema,makeProposal,requireRole,requireTransition,type Briefing } from './domain';
@@ -50,6 +50,7 @@ export async function campaignAction(user:User,id:string,action:string,expectedV
       if(!version.proposal) throw new AppError(409,'Gere a proposta antes de aprovar.');
       await tx.query("INSERT INTO approvals(campaign_id,version,kind,user_id) VALUES($1,$2,'create',$3)",[id,expectedVersion,user.id]); status='approved';
     } else {
+      if(action==='create')requireCreationAllowed(id);
       if(process.env.ADS_PUBLISH_ENABLED!=='true') throw new AppError(422,'Publicação indisponível: valide a integração Meta WhatsApp e habilite ADS_PUBLISH_ENABLED no servidor.');
       if(process.env.VERCEL==='1'&&process.env.JOB_EXECUTOR!=='vercel')throw new AppError(422,'Configure JOB_EXECUTOR=vercel antes de publicar nesta hospedagem.');
       const approval=await tx.query("SELECT 1 FROM approvals WHERE campaign_id=$1 AND version=$2 AND kind='create'",[id,expectedVersion]);
