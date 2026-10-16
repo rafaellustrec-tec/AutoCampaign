@@ -3,6 +3,7 @@ import { requireActivationEnabled,requireCreationAllowed } from './publication-p
 import { AppError,campaignBriefingSchema,metaCreativeVariants,type Briefing,whatsappDestination } from './domain';
 import { accessToken,googleRequest,providerJson } from './oauth';
 import { assetBytes } from './storage';
+import {verifyPageWhatsApp} from './meta-whatsapp-verification';
 type Channel=Briefing['channels'][number];
 type Job={id:string;client_id:string;campaign_id:string;version:number;kind:string;lease_token:string};
 type Account={id:string;external_id:string;currency:string;timezone:string;platform:'meta'|'google';connection_id:string;credentials:string};
@@ -79,8 +80,8 @@ async function createMeta(job:Job,account:Account,briefing:Briefing,c:Channel,to
  if(assets.length!==new Set(c.assetIds).size||assets.some(a=>a.content_type==='video/mp4'))throw new AppError(422,'Utilize imagens disponíveis no piloto; publicação de vídeo requer certificação adicional.');
  if(assets.some(a=>Number(a.size)>30*1024*1024))throw new AppError(422,'Imagem acima do limite do piloto (30 MB).');
  if(!/^\d+$/.test(c.pageId??'')||!/^\d+$/.test(c.geoTargetId??''))throw new AppError(422,'IDs Meta inválidos.');
- const page=await meta(token,`${c.pageId}?fields=id,name,whatsapp_number`);if(!page.id)throw new AppError(422,'Página não acessível.');
- if(!page.whatsapp_number||String(page.whatsapp_number).replace(/\D/g,'')!==c.whatsappNumber)throw new AppError(422,'O WhatsApp informado não está confirmado como vinculado a esta página.');
+ const page=await meta(token,`${c.pageId}?fields=id,name,whatsapp_number`);if(page.id!==c.pageId)throw new AppError(422,'Página não acessível ou diferente da aprovada.');
+ await verifyPageWhatsApp(job,account.id,c.pageId!,c.whatsappNumber!,page.whatsapp_number);
  if(c.kind==='meta_form'){if(!/^\d+$/.test(c.formId??''))throw new AppError(422,'ID de formulário inválido.');const form=await meta(token,`${c.formId}?fields=id,status,page`);if(form.page?.id!==c.pageId||form.status!=='ACTIVE')throw new AppError(422,'Formulário indisponível ou de outra página.');}
  const payloads=metaWhatsAppPayloads(briefing,c,account.currency,account.timezone,marker);
  const [campaign]=await operation(job,account,'meta-campaign',async()=>{const result=await meta(token,`${act}/campaigns`,payloads.campaign);return [{key:'meta-campaign',id:result.id,kind:'campaign'}];});

@@ -61,3 +61,5 @@ Regras nesta entrega são critérios e agenda de revisão humana, com registro e
 `node scripts/check-strategy-flow.mjs` testa o fluxo completo no navegador, com dados e mutações de produto simulados; usa sessão autorizada e verifica os bloqueios reais de publicação. Não cria anúncios reais.
 
 A liberação de um piloto pode usar `ADS_PUBLISH_CAMPAIGN_IDS` com UUIDs separados por vírgula. Quando definida, a API e o conector recusam criação para campanhas fora dessa lista; vazia ou inválida bloqueia todas. Isso não aprova versões nem autoriza ativação. `ADS_ACTIVATION_ENABLED=false` mantém a ativação bloqueada independentemente da criação.
+
+No piloto restrito por UUID, se a Meta omitir `Page.whatsapp_number`, o conector aceita uma conferência administrativa registrada pelo servidor no `audit_log`, com campanha/versão/conta/Página/número exatos, origem nas configurações de WhatsApp da Página e hash SHA-256 da evidência. Expira em quatro horas; não existe endpoint público para criar esse registro. Um número diferente retornado pela API sempre bloqueia, mesmo com evidência. Essa confirmação manual do piloto não é descoberta automática de vínculos.
