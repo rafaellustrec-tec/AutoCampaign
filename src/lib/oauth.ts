@@ -7,6 +7,7 @@ import { AppError } from './domain';
 import { encrypt,decrypt,hash } from './security';
 import { metaLoginUrl,exchangeMetaCode } from './meta-login';
 import { googleLoginUrl,googleAccessibleAccounts,googleCustomerId } from './google-connection';
+import { synchronizeAccounts } from './account-registry';
 type Platform='meta'|'google';
 type Connection={id:string;platform:Platform;credentials:string};
 type Credentials={access_token:string;refresh_token?:string;expires_at:number};
@@ -23,7 +24,7 @@ export async function providerJson(url:string,init?:RequestInit):Promise<any> {
 }
 const callback=(platform:Platform)=>`${setting('APP_URL')}/api/oauth/${platform}/callback`;
 const metaSettings=()=>({appId:setting('META_APP_ID'),apiVersion:setting('META_API_VERSION'),configId:setting('META_LOGIN_CONFIG_ID'),redirectUri:callback('meta')});
-export async function oauthStart(user:User,clientId:string,platform:Platform) {
+export async function oauthStart(user:User,clientId:string|null,platform:Platform) {
   const state=randomBytes(32).toString('hex');
   const target=platform==='meta'?metaLoginUrl(metaSettings(),state):googleLoginUrl(setting('GOOGLE_CLIENT_ID'),callback(platform),state);
   if(platform==='google') {
@@ -47,8 +48,11 @@ export async function oauthCallback(request:Request,user:User,platform:Platform)
   }
   if(!token.access_token||(platform==='google'&&!token.refresh_token)) throw new AppError(422,'Credencial incompleta. Revogue e autorize novamente com consentimento offline.');
   const credentials:Credentials={access_token:token.access_token,refresh_token:token.refresh_token,expires_at:platform==='meta'?token.expires_at:Date.now()+Number(token.expires_in??3600)*1000};
-  await db.query('INSERT INTO connections(client_id,platform,credentials) VALUES($1,$2,$3)',[pending.client_id,platform,encrypt(JSON.stringify(credentials))]);
-  return NextResponse.redirect(`${setting('APP_URL')}/?client=${pending.client_id}&tab=connections`);
+  const connection=(await db.query('INSERT INTO connections(client_id,platform,credentials) VALUES($1,$2,$3) RETURNING id',[pending.client_id,platform,encrypt(JSON.stringify(credentials))])).rows[0];
+  const destination=new URL(setting('APP_URL'));destination.searchParams.set('tab','connections');
+  if(pending.client_id)destination.searchParams.set('client',pending.client_id);
+  try{await synchronizeAccounts(user,connection.id,listRemoteAccounts);}catch{destination.searchParams.set('import','failed');}
+  return NextResponse.redirect(destination);
 }
 export async function accessToken(connection:Connection) {
   const creds:Credentials=JSON.parse(decrypt(connection.credentials));
@@ -70,9 +74,12 @@ export async function listRemoteAccounts(connection:Connection) {
   const token=await accessToken(connection);
   const accounts:{externalId:string;name:string;currency:string;timezone:string}[]=[];
   if(connection.platform==='meta') {
+    const visited=new Set<string>();
     let next:string|undefined=`https://graph.facebook.com/${setting('META_API_VERSION')}/me/adaccounts?fields=id,name,currency,timezone_name&limit=100`;
     while(next) {
-      const parsed=new URL(next); if(parsed.hostname!=='graph.facebook.com') throw new AppError(502,'Paginação inválida.');
+      if(visited.has(next)||visited.size>=100)throw new AppError(502,'A importação não terminou. A lista salva foi preservada; tente novamente.');
+      visited.add(next);
+      const parsed=new URL(next); if(parsed.hostname!=='graph.facebook.com'||parsed.protocol!=='https:') throw new AppError(502,'Paginação inválida.');
       const page=await providerJson(next,{headers:{Authorization:`Bearer ${token}`}});
       for(const a of page.data??[]) accounts.push({externalId:a.id,name:a.name,currency:a.currency,timezone:a.timezone_name}); next=page.paging?.next;
     }

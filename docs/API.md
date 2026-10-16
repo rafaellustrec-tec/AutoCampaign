@@ -11,7 +11,11 @@ Sessões HttpOnly de 12 horas, perfis e acesso por cliente. Mutações exigem `O
 | GET / POST | clients | listar / criar `{name}` |
 | GET | users | IDs de usuários; administrador |
 | POST | clients/:id/members | `{userId}`; administrador |
-| GET | oauth/meta?clientId=... | inicia conexão oficial; administrador |
+| GET | oauth/meta ou oauth/google | inicia conexão global; administrador; clientId opcional por compatibilidade |
+| GET | connections | autorizações globais e status da importação, sem segredos; administrador |
+| POST | connections/:id/sync | importa todas as contas autorizadas; administrador |
+| GET | accounts | lista geral de contas salvas, com cliente opcional; administrador |
+| POST | accounts/assign | `{assignments:[{accountId,clientId}]}`; lote atômico de até 500; administrador |
 | GET | clients/:id/connections | autorizações, sem segredos |
 | GET / POST | clients/:id/connections/:connectionId/accounts | listar autorizadas / vincular `{externalId}` |
 | GET | clients/:id/accounts | contas vinculadas |
@@ -30,7 +34,7 @@ Sessões HttpOnly de 12 horas, perfis e acesso por cliente. Mutações exigem `O
 
 ## Briefing
 
-Schema vigente: `whatsappBriefingSchema` em `src/lib/domain.ts`. Mantém o envelope `channels` por compatibilidade, mas aceita exatamente uma entrada `platform=meta`, `kind=meta_whatsapp`. Campos: conta, orçamento, página, número com DDI, mensagem opcional, destino wa.me correspondente, chave geográfica da cidade e imagens. O telefone é normalizado antes de persistir. Não requer pixel, conversão nem formulário. Google e Meta formulário são rejeitados para novas campanhas e novas conexões Google estão desabilitadas.
+Schema vigente: `whatsappBriefingSchema` em `src/lib/domain.ts`. Mantém o envelope `channels` por compatibilidade, mas aceita exatamente uma entrada `platform=meta`, `kind=meta_whatsapp`. Campos: conta vinculada ao cliente, orçamento, página, número com DDI, mensagem opcional, destino wa.me correspondente, chave geográfica da cidade e imagens. O telefone é normalizado antes de persistir. Não requer pixel, conversão nem formulário. Google e Meta formulário são rejeitados para novas campanhas; conexões Google permitem importar e vincular contas.
 
 Nome, oferta, cidade para conferência e período permanecem no nível principal. O fuso usado para a publicação vem da conta conectada. As configurações fixas de objetivo, otimização e audiência são mostradas na proposta e descritas no README.
 

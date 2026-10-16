@@ -6,7 +6,7 @@ import { AppError,whatsappBriefingSchema,makeProposal,requireRole,requireTransit
 export async function audit(tx:PoolClient,user:User,clientId:string,action:string,entity:string,detail:unknown={}) { await tx.query('INSERT INTO audit_log(client_id,user_id,action,entity_id,detail) VALUES($1,$2,$3,$4,$5)',[clientId,user.id,action,entity,JSON.stringify(detail)]); }
 async function validateReferences(tx:PoolClient,clientId:string,briefing:Briefing) {
   for(const channel of briefing.channels) {
-    const account=await tx.query("SELECT a.id FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.id=$1 AND a.client_id=$2 AND a.platform=$3 AND c.status='connected'",[channel.accountId,clientId,channel.platform]);
+    const account=await tx.query("SELECT a.id FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.id=$1 AND a.client_id=$2 AND a.platform=$3 AND a.available AND c.status='connected'",[channel.accountId,clientId,channel.platform]);
     if(!account.rowCount) throw new AppError(422,'Conta indisponível ou pertencente a outro cliente.');
     if(channel.assetIds.length) {
       const assets=await tx.query("SELECT id FROM assets WHERE client_id=$1 AND id=ANY($2::uuid[]) AND status='ready'",[clientId,channel.assetIds]);

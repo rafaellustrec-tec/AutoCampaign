@@ -10,9 +10,11 @@ import { saveCampaign,campaignAction,audit } from '@/lib/campaigns';
 import { dispatchCampaignJob,dispatchWorkflow } from '@/lib/workflow-dispatch';
 import { uploadUrl,freezeUpload,storePdf,downloadUrl } from '@/lib/storage';
 import { oauthStart,oauthCallback,listRemoteAccounts } from '@/lib/oauth';
+import { synchronizeAccounts,savedAccounts,assignAccounts } from '@/lib/account-registry';
 import { reportPdf,reportData,reportConfigSchema,reportLogo } from '@/lib/reports';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
+export const maxDuration=300;
 type Context={params:Promise<{path:string[]}>};
 async function handler(request:Request,context:Context) {
  try {
@@ -39,7 +41,15 @@ async function handler(request:Request,context:Context) {
     if(method!=='GET') throw new AppError(405,'Método não permitido.');
     const provider=z.enum(['meta','google']).parse(path[1]);
     if(path[2]==='callback') return await oauthCallback(request,user,provider);
-    requireRole(user.role,[]); const clientId=uuid.parse(url.searchParams.get('clientId')); await requireClient(user,clientId); return await oauthStart(user,clientId,provider);
+    requireRole(user.role,[]); const clientId=url.searchParams.has('clientId')?uuid.parse(url.searchParams.get('clientId')):null;
+    if(clientId)await requireClient(user,clientId);return await oauthStart(user,clientId,provider);
+  }
+  if(path[0]==='accounts'&&path.length===1&&method==='GET')return NextResponse.json(await savedAccounts(user));
+  if(path.join('/')==='accounts/assign'&&method==='POST')return NextResponse.json(await assignAccounts(user,(await request.json()).assignments));
+  if(path[0]==='connections') {
+    requireRole(user.role,[]);
+    if(path.length===1&&method==='GET')return NextResponse.json((await db.query('SELECT id,platform,status,created_at,import_status,imported_at,import_error FROM connections ORDER BY created_at DESC')).rows);
+    if(path.length===3&&path[2]==='sync'&&method==='POST')return NextResponse.json(await synchronizeAccounts(user,uuid.parse(path[1]),listRemoteAccounts));
   }
   if(path[0]==='users') { requireRole(user.role,[]); if(method==='GET') return NextResponse.json((await db.query('SELECT id,name,email,role,disabled FROM users ORDER BY name')).rows); }
   if(path[0]==='clients'&&path.length===1) {
@@ -50,7 +60,7 @@ async function handler(request:Request,context:Context) {
   if(path[0]==='clients'&&path[1]) {
     const clientId=uuid.parse(path[1]); await requireClient(user,clientId);
     if(path[2]==='members'&&method==='POST') { requireRole(user.role,[]); const {userId}=z.object({userId:uuid}).parse(await request.json()); await transaction(async tx=>{ await tx.query('INSERT INTO client_members(client_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[clientId,userId]); await audit(tx,user,clientId,'member.granted',userId); }); return NextResponse.json({ok:true}); }
-    if(path[2]==='accounts'&&method==='GET') return NextResponse.json((await db.query('SELECT a.*,c.status AS connection_status FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.client_id=$1 ORDER BY a.name',[clientId])).rows);
+    if(path[2]==='accounts'&&method==='GET') return NextResponse.json((await db.query("SELECT a.*,CASE WHEN a.available THEN c.status ELSE 'unavailable' END AS connection_status FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.client_id=$1 ORDER BY a.name",[clientId])).rows);
     if(path[2]==='connections'&&path.length===3&&method==='GET') return NextResponse.json((await db.query('SELECT id,platform,status,created_at FROM connections WHERE client_id=$1',[clientId])).rows);
     if(path[2]==='connections'&&path[3]&&path[4]==='accounts') {
       requireRole(user.role,[]); const connectionId=uuid.parse(path[3]);

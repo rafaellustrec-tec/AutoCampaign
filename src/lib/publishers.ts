@@ -98,7 +98,7 @@ export async function executePublication(job:Job) {
  if(process.env.ADS_PUBLISH_ENABLED!=='true')throw new AppError(422,'Publicação externa desabilitada.');
  const version=(await db.query('SELECT briefing FROM campaign_versions WHERE campaign_id=$1 AND version=$2',[job.campaign_id,job.version])).rows[0];const briefing=whatsappBriefingSchema.parse(version.briefing);
  for(const c of briefing.channels) {
-  const account=(await db.query("SELECT a.*,co.credentials FROM ad_accounts a JOIN connections co ON co.id=a.connection_id WHERE a.id=$1 AND a.client_id=$2 AND co.status='connected'",[c.accountId,job.client_id])).rows[0] as Account|undefined;if(!account)throw new AppError(422,'Conta desconectada.');
+  const account=(await db.query("SELECT a.*,co.credentials FROM ad_accounts a JOIN connections co ON co.id=a.connection_id WHERE a.id=$1 AND a.client_id=$2 AND a.available AND co.status='connected'",[c.accountId,job.client_id])).rows[0] as Account|undefined;if(!account)throw new AppError(422,'Conta desconectada.');
   const token=await accessToken({id:account.connection_id,platform:account.platform,credentials:account.credentials});
   if(account.platform!=='meta')throw new AppError(422,'Esta versão publica somente Meta para WhatsApp.');
   try {

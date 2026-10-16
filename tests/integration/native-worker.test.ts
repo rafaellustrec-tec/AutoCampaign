@@ -48,7 +48,7 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
   await t.test('SQL de instalação Supabase aplica migrações uma vez e protege tabelas',async()=>{
     execFileSync(process.execPath,['scripts/prepare-supabase.mjs']);const sql=await readFile('artifacts/supabase-bootstrap.sql','utf8');
     const setup=await root.connect();const target=`bootstrap_${randomUUID().replaceAll('-','')}`;
-    try{await setup.query(`CREATE SCHEMA ${target}`);await setup.query(`SET search_path=${target}`);await setup.query(sql);await setup.query(sql);assert.equal((await setup.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'4');assert.equal((await setup.query("SELECT count(*) FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relkind='r' AND NOT relrowsecurity")).rows[0].count,'0');}
+    try{await setup.query(`CREATE SCHEMA ${target}`);await setup.query(`SET search_path=${target}`);await setup.query(sql);await setup.query(sql);assert.equal((await setup.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'5');assert.equal((await setup.query("SELECT count(*) FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relkind='r' AND NOT relrowsecurity")).rows[0].count,'0');}
     finally{await setup.query('ROLLBACK');await setup.query('SET search_path=public');await setup.query(`DROP SCHEMA IF EXISTS ${target} CASCADE`);setup.release();}
   });
   await t.test('isola clientes e materiais',async()=>{await assert.rejects(saveCampaign(operator,other.id,briefing),/Cliente/);await assert.rejects(saveCampaign(admin,other.id,briefing),/outro cliente/);const bad=structuredClone(briefing);bad.channels[0].assetIds=[randomUUID()];await assert.rejects(saveCampaign(operator,client.id,bad),/Material/);});
@@ -83,7 +83,40 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
   await t.test('lease expirado não recria tarefas automaticamente',async()=>{await fresh();job=await claimJob();await db.query("UPDATE jobs SET lease_until=now()-interval '1 second' WHERE id=$1",[job.id]);assert.equal(await claimJob(),null);assert.equal((await jobState(job.id)).status,'failed');assert.equal((await runJob(job)).status,'lost_lease');});
   await t.test('workflow reivindica somente seu job e não usa lock de sessão',async()=>{const {workflowAttempt}=await import('../../src/lib/workflow-runner');const a=await fresh(),b=await fresh();const first=(await db.query('SELECT id FROM jobs WHERE campaign_id=$1',[a.id])).rows[0];const second=(await db.query('SELECT id FROM jobs WHERE campaign_id=$1',[b.id])).rows[0];const before=calls.filter(c=>c.path.endsWith('/campaigns')).length;await Promise.all([workflowAttempt(second.id),workflowAttempt(second.id)]);assert.equal((await jobState(second.id)).status,'succeeded');assert.equal((await jobState(first.id)).status,'queued');assert.equal(calls.filter(c=>c.path.endsWith('/campaigns')).length,before+1);await workflowAttempt(first.id);assert.equal((await jobState(first.id)).status,'succeeded');const repeat=await workflowAttempt(second.id);assert.equal(repeat.status,'succeeded');assert.equal(repeat.waitMs,0);});
   await t.test('workflow conserva backoff, bloqueia ambiguidade e respeita flag',async()=>{const {workflowAttempt}=await import('../../src/lib/workflow-runner');const c=await fresh();const id=(await db.query('SELECT id FROM jobs WHERE campaign_id=$1',[c.id])).rows[0].id;process.env.ADS_PUBLISH_ENABLED='false';assert.equal((await workflowAttempt(id)).status,'disabled');assert.equal((await jobState(id)).attempts,0);process.env.ADS_PUBLISH_ENABLED='true';mode='rate-limit';const result=await workflowAttempt(id);assert.equal(result.status,'queued');assert.ok(result.waitMs>1000);assert.equal((await jobState(id)).attempts,1);await db.query('UPDATE jobs SET available_at=now() WHERE id=$1',[id]);mode='lost-response';assert.equal((await workflowAttempt(id)).status,'failed');const before=calls.length;mode='ok';assert.equal((await workflowAttempt(id)).status,'failed');assert.equal(calls.length,before);});
-  await t.test('Google OAuth vincula estado ao administrador, renova token e exige reconexão após revogação',async()=>{
+  await t.test('lista global importa sem duplicar, preserva vínculos, protege lotes e recupera falhas',async()=>{
+    const {synchronizeAccounts,savedAccounts,assignAccounts}=await import('../../src/lib/account-registry');
+    const {AppError}=await import('../../src/lib/domain');
+    const global=(await db.query("INSERT INTO connections(client_id,platform,credentials) VALUES(NULL,'meta',$1) RETURNING id",[encrypt(JSON.stringify({access_token:'fixture-global',expires_at:Date.now()+3600000}))])).rows[0];
+    const snapshot=Array.from({length:120},(_,i)=>({externalId:`act_${9000000000+i}`,name:`Conta ${i}`,currency:'BRL',timezone:'America/Bahia'}));
+    snapshot.push({externalId:'act_123',name:'Conta existente',currency:'BRL',timezone:'America/Bahia'});
+    let calls=0;const discover=async()=>{calls++;return [...snapshot,snapshot[0]];};
+    await assert.rejects(synchronizeAccounts(operator,global.id,discover));await assert.rejects(savedAccounts(operator));assert.equal(calls,0);
+    assert.equal((await synchronizeAccounts(admin,global.id,discover)).count,121);
+    const first=await savedAccounts(admin);assert.equal(first.filter((a:any)=>snapshot.some(s=>s.externalId===a.external_id)).length,121);
+    assert.ok(first.every((a:any)=>!('credentials' in a)));assert.equal(first.find((a:any)=>a.external_id==='act_123').client_id,client.id);
+    assert.equal((await synchronizeAccounts(admin,global.id,discover)).count,121);assert.equal((await savedAccounts(admin)).length,first.length);
+    const a=first.find((row:any)=>row.external_id===snapshot[0].externalId),b=first.find((row:any)=>row.external_id===snapshot[1].externalId),c=first.find((row:any)=>row.external_id===snapshot[2].externalId);
+    await assert.rejects(assignAccounts(operator,[{accountId:a.id,clientId:client.id}]));
+    const batch=[{accountId:a.id,clientId:client.id},{accountId:b.id,clientId:other.id}];assert.equal((await assignAccounts(admin,batch)).linked,2);assert.equal((await assignAccounts(admin,batch)).linked,0);
+    await assert.rejects(assignAccounts(admin,[{accountId:c.id,clientId:client.id},{accountId:a.id,clientId:other.id}]),/outro cliente/);
+    assert.equal((await db.query('SELECT client_id FROM ad_accounts WHERE id=$1',[c.id])).rows[0].client_id,null);
+    await assert.rejects(assignAccounts(admin,[batch[0],batch[0]]));
+    await assert.rejects(assignAccounts(admin,[{accountId:c.id,clientId:randomUUID()}]),/cliente/);
+    await assert.rejects(synchronizeAccounts(admin,global.id,async()=>{throw new AppError(429,'quota');}));
+    assert.equal((await db.query('SELECT import_error FROM connections WHERE id=$1',[global.id])).rows[0].import_error,'RATE_LIMIT');
+    assert.equal((await savedAccounts(admin)).filter((r:any)=>r.available).length,first.length);
+    let release!:()=>void;let ready!:()=>void;const readyPromise=new Promise<void>(resolve=>{ready=resolve;});const held=new Promise<void>(resolve=>{release=resolve;});
+    const running=synchronizeAccounts(admin,global.id,async()=>{ready();await held;return snapshot;});await readyPromise;
+    await assert.rejects(synchronizeAccounts(admin,global.id,discover),/andamento/);release();await running;
+    await synchronizeAccounts(admin,global.id,async()=>snapshot.filter(row=>row.externalId!==a.external_id));
+    const missing=(await db.query('SELECT client_id,available FROM ad_accounts WHERE id=$1',[a.id])).rows[0];assert.equal(missing.client_id,client.id);assert.equal(missing.available,false);
+    await assert.rejects(assignAccounts(admin,[{accountId:a.id,clientId:client.id}]),/indisponível/);
+    const reauth=(await db.query("INSERT INTO connections(client_id,platform,credentials) VALUES(NULL,'meta','fixture-encrypted-unused') RETURNING id")).rows[0];
+    await synchronizeAccounts(admin,reauth.id,async()=>snapshot);
+    const restored=(await db.query('SELECT id,client_id,connection_id,available FROM ad_accounts WHERE id=$1',[a.id])).rows[0];assert.equal(restored.client_id,client.id);assert.equal(restored.connection_id,reauth.id);assert.equal(restored.available,true);
+    assert.equal((await savedAccounts(admin)).length,first.length);
+  });
+  await t.test('Google OAuth global importa automaticamente, renova token e exige reconexão após revogação',async()=>{
     const {oauthStart,oauthCallback,accessToken,listRemoteAccounts}=await import('../../src/lib/oauth');
     const savedFetch=globalThis.fetch;const envKeys=['APP_URL','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_ADS_DEVELOPER_TOKEN','GOOGLE_ADS_API_VERSION','GOOGLE_ADS_LOGIN_CUSTOMER_ID'];
     const savedEnv=Object.fromEntries(envKeys.map(key=>[key,process.env[key]]));let revoked=false;let tokenCalls=0;let refreshCalls=0;
@@ -104,14 +137,15 @@ test('PostgreSQL + worker nativo + Meta WhatsApp',{skip:!process.env.TEST_DATABA
       return Response.json([{results:[{customer:{id:'1234567890',descriptiveName:'Google fixture',currencyCode:'BRL',timeZone:'America/Bahia',manager:false,status:'ENABLED'}}]}]);
     };
     try{
-      const start=await oauthStart(admin,client.id,'google');const location=new URL(start.headers.get('location')!);const state=location.searchParams.get('state')!;
+      const start=await oauthStart(admin,null,'google');const location=new URL(start.headers.get('location')!);const state=location.searchParams.get('state')!;
       assert.equal(location.searchParams.get('access_type'),'offline');
       const request=new Request('https://example.com/api/oauth/google/callback?'+new URLSearchParams({state,code:'fixture-code'}));
       await assert.rejects(oauthCallback(request,{...admin,id:randomUUID()},'google'),/cancelada ou expirada/);assert.equal(tokenCalls,0);
       assert.equal((await oauthCallback(request,admin,'google')).status,307);
-      await assert.rejects(oauthCallback(request,admin,'google'),/cancelada ou expirada/);assert.equal(tokenCalls,1);
-      const connected=(await db.query("SELECT * FROM connections WHERE client_id=$1 AND platform='google'",[client.id])).rows[0];
-      assert.ok(connected);assert.ok(!connected.credentials.includes('fixture-refresh'));
+      await assert.rejects(oauthCallback(request,admin,'google'),/cancelada ou expirada/);assert.equal(tokenCalls,2);
+      const connected=(await db.query("SELECT * FROM connections WHERE platform='google' ORDER BY created_at DESC LIMIT 1")).rows[0];
+      assert.ok(connected);assert.equal(connected.client_id,null);assert.equal(connected.import_status,'synced');assert.ok(!connected.credentials.includes('fixture-refresh'));
+      const imported=(await db.query("SELECT * FROM ad_accounts WHERE platform='google' AND external_id='1234567890'")).rows[0];assert.ok(imported);assert.equal(imported.client_id,null);
       const accounts=await listRemoteAccounts(connected);assert.equal(accounts[0].externalId,'1234567890');assert.equal(refreshCalls,1);
       connected.credentials=encrypt(JSON.stringify({access_token:'fixture-expired',refresh_token:'fixture-refresh',expires_at:1}));
       await db.query('UPDATE connections SET credentials=$2 WHERE id=$1',[connected.id,connected.credentials]);revoked=true;
