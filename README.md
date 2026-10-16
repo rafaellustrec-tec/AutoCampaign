@@ -1,4 +1,4 @@
-# Órbita — campanhas Meta para WhatsApp
+# Órbita — estratégias Meta WhatsApp e Google Pesquisa
 
 Painel interno da agência para configurar e criar campanhas de conversas no WhatsApp. **Sem n8n:** o executor lê a fila PostgreSQL e chama diretamente a Marketing API da Meta. Docker usa worker Node contínuo; Vercel usa `campaignWorkflow`, com tentativas e esperas duráveis.
 
@@ -7,7 +7,7 @@ Painel interno da agência para configurar e criar campanhas de conversas no Wha
 Cliente → conta Meta → imagens → briefing → proposta → aprovação da estrutura → criação pausada → conferência → autorização de ativação.
 
 - Uma conta Meta e um WhatsApp por campanha. Telefone com DDI; o destino `wa.me` é gerado e conferido contra o telefone aprovado.
-- Imagens JPEG/PNG/WebP de até 30 MB. Um anúncio por imagem. Vídeos, formulários Meta e Google não são aceitos na criação desta fase.
+- Imagens JPEG/PNG/WebP de até 30 MB. Um anúncio por variação de texto e imagem. Vídeos e formulários Meta não são aceitos nesta fase. Nova estratégia também prepara Google Pesquisa com anúncio responsivo, palavras-chave, negativas e landing page.
 - Modelo: `OUTCOME_ENGAGEMENT`, destino `WHATSAPP`, otimização `CONVERSATIONS`, orçamento diário no conjunto, cidade por chave oficial, idade 18–65, posicionamentos automáticos e nenhuma categoria especial. A configuração aparece na proposta.
 - O worker verifica se o número está vinculado à página antes de criar objetos. Permissões e elegibilidade reais continuam dependendo da Meta.
 - Campanha, conjunto e anúncios são criados pausados. Alterar o briefing incrementa a versão e exige nova aprovação. Ativar é uma ação explícita do aprovador.
@@ -48,4 +48,14 @@ Perfis: operador cadastra/configura e solicita criação; aprovador aprova estru
 
 Instalação em produção: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Preparação Vercel/Supabase: [docs/VERCEL-SUPABASE.md](docs/VERCEL-SUPABASE.md). Contrato do painel: [docs/API.md](docs/API.md).
 
-Relatórios e conectores Google antigos foram preservados como base para evolução, mas não participam da criação deste piloto. Não há migração destrutiva nem remoção de dados legados. Automações/workflows do n8n foram retirados. O histórico das tentativas anteriores de hospedagem está em `docs/HOSTING-HISTORY.md` e não é o procedimento vigente.
+O conector Google valida a estrutura sem mutações antes da criação atômica pausada; campanha, grupo e anúncio ficam pausados. A conversão informada precisa estar ativa e ser principal nos objetivos da conta; a campanha usa os objetivos de conversão padrão da conta. O piloto real nas plataformas continua pendente de validação e os bloqueios de publicação permanecem ativos por padrão. Não há migração destrutiva nem remoção de dados legados. Automações/workflows do n8n foram retirados. O histórico das tentativas anteriores de hospedagem está em `docs/HOSTING-HISTORY.md` e não é o procedimento vigente.
+
+## Nova estratégia
+
+A aba Estratégias oferece Cliente → Estratégia → Criativos → Regras → Revisão. Um rascunho por cliente salva automaticamente com versão otimista, mantém histórico e permite até cinco frentes. O investimento é do período inteiro; percentuais distribuem a verba entre frentes e canais, com orçamento diário arredondado para baixo. Isso não substitui controles financeiros da plataforma.
+
+Preparar campanhas cria propostas internas por frente/canal em uma transação, sem aprovação automática, tarefas ou chamadas às plataformas. Pedidos repetidos retornam as mesmas campanhas. A edição de uma estratégia preparada exige duplicação; alterações de briefing exigem nova aprovação. Os modelos iniciais configuram frentes; não são modelos personalizados salvos pela agência.
+
+Regras nesta entrega são critérios e agenda de revisão humana, com registro em auditoria e próxima data. Não executam testes, rotação, escala de verba ou decisões automáticas. Imagens vêm da biblioteca do cliente e recebem URLs de prévia privadas e temporárias. Contas precisam estar vinculadas em Conexões. Configurações conhecidas do último briefing são reaproveitadas; IDs e elegibilidade ainda precisam de conferência.
+
+`node scripts/check-strategy-flow.mjs` testa o fluxo completo no navegador, com dados e mutações de produto simulados; usa sessão autorizada e verifica os bloqueios reais de publicação. Não cria anúncios reais.

@@ -1,6 +1,6 @@
 import { db,transaction } from './db';
 import { requireActivationEnabled } from './publication-policy';
-import { AppError,whatsappBriefingSchema,type Briefing,whatsappDestination } from './domain';
+import { AppError,campaignBriefingSchema,metaCreativeVariants,type Briefing,whatsappDestination } from './domain';
 import { accessToken,googleRequest,providerJson } from './oauth';
 import { assetBytes } from './storage';
 type Channel=Briefing['channels'][number];
@@ -35,11 +35,11 @@ export function googleCreatePayload(briefing:Briefing,c:Channel,customer:string,
  const operations:any[]=[
   {campaignBudgetOperation:{create:{resourceName:budget,name:`${marker} / verba`,amountMicros:String(Math.round(c.dailyBudget*1000000)),deliveryMethod:'STANDARD',explicitlyShared:false}}},
   {campaignOperation:{create:{resourceName:campaign,name:`${briefing.name} [${marker}]`,status:'PAUSED',advertisingChannelType:'SEARCH',campaignBudget:budget,maximizeConversions:{},startDate:briefing.startDate.replaceAll('-',''),endDate:briefing.endDate.replaceAll('-',''),networkSettings:{targetGoogleSearch:true,targetSearchNetwork:false,targetContentNetwork:false},geoTargetTypeSetting:{positiveGeoTargetType:'PRESENCE'},containsEuPoliticalAdvertising:'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING'}}},
-  {adGroupOperation:{create:{resourceName:group,name:`${marker} / principal`,campaign,status:'ENABLED',type:'SEARCH_STANDARD'}}},
+  {adGroupOperation:{create:{resourceName:group,name:`${marker} / principal`,campaign,status:'PAUSED',type:'SEARCH_STANDARD'}}},
   {campaignCriterionOperation:{create:{campaign,location:{geoTargetConstant:`geoTargetConstants/${c.geoTargetId}`}}}},
   ...c.keywords.map(text=>({adGroupCriterionOperation:{create:{adGroup:group,status:'ENABLED',keyword:{text,matchType:'PHRASE'}}}})),
   ...c.negatives.map(text=>({campaignCriterionOperation:{create:{campaign,negative:true,keyword:{text,matchType:'PHRASE'}}}})),
-  {adGroupAdOperation:{create:{adGroup:group,status:'ENABLED',ad:{finalUrls:[c.destination],responsiveSearchAd:{headlines:c.headlines.map(text=>({text})),descriptions:c.descriptions.map(text=>({text}))}}}}}
+  {adGroupAdOperation:{create:{adGroup:group,status:'PAUSED',ad:{finalUrls:[c.destination],responsiveSearchAd:{headlines:c.headlines.map(text=>({text})),descriptions:c.descriptions.map(text=>({text}))}}}}}
  ];
  return {mutateOperations:operations,partialFailure:false};
 }
@@ -69,7 +69,7 @@ export function metaWhatsAppPayloads(briefing:Briefing,c:Channel,currency:string
  const link=whatsappDestination(c.whatsappNumber??'',c.whatsappMessage);
  return {
   campaign:{name:`${briefing.name} [${marker}]`,objective:'OUTCOME_ENGAGEMENT',status:'PAUSED',special_ad_categories:[]},
-  adset:{name:`${marker} / WhatsApp`,status:'PAUSED',daily_budget:minorUnits(c.dailyBudget,currency),billing_event:'IMPRESSIONS',optimization_goal:'CONVERSATIONS',destination_type:'WHATSAPP',bid_strategy:'LOWEST_COST_WITHOUT_CAP',start_time:accountTimestamp(briefing.startDate,'00:00:00',timezone),end_time:accountTimestamp(briefing.endDate,'23:59:59',timezone),promoted_object:{page_id:c.pageId},targeting:{geo_locations:{cities:[{key:c.geoTargetId}]},age_min:18,age_max:65}},
+  adset:{name:`${marker} / WhatsApp`,status:'PAUSED',daily_budget:minorUnits(c.dailyBudget,currency),billing_event:'IMPRESSIONS',optimization_goal:'CONVERSATIONS',destination_type:'WHATSAPP',bid_strategy:'LOWEST_COST_WITHOUT_CAP',start_time:accountTimestamp(briefing.startDate,'00:00:00',timezone),end_time:accountTimestamp(briefing.endDate,'23:59:59',timezone),promoted_object:{page_id:c.pageId},targeting:{geo_locations:{cities:[{key:c.geoTargetId}]},age_min:c.ageMin??18,age_max:c.ageMax??65}},
   linkData:{link,message:briefing.offer,name:briefing.name,call_to_action:{type:'WHATSAPP_MESSAGE',value:{app_destination:'WHATSAPP',link,whatsapp_number:c.whatsappNumber}}},
  };
 }
@@ -85,24 +85,24 @@ async function createMeta(job:Job,account:Account,briefing:Briefing,c:Channel,to
  const payloads=metaWhatsAppPayloads(briefing,c,account.currency,account.timezone,marker);
  const [campaign]=await operation(job,account,'meta-campaign',async()=>{const result=await meta(token,`${act}/campaigns`,payloads.campaign);return [{key:'meta-campaign',id:result.id,kind:'campaign'}];});
  const [adset]=await operation(job,account,'meta-adset',async()=>{const result=await meta(token,`${act}/adsets`,{...payloads.adset,campaign_id:campaign.id});return [{key:'meta-adset',id:result.id,kind:'adset'}];});
- for(const assetId of c.assetIds) {
+ for(const variant of metaCreativeVariants(c,briefing.name,briefing.offer)) {
+   const assetId=variant.assetId;const variantKey=variant.id;
    const asset=(await db.query("SELECT * FROM assets WHERE id=$1 AND client_id=$2 AND status='ready'",[assetId,job.client_id])).rows[0];if(!asset)throw new AppError(422,'Material não disponível.');
    if(asset.content_type==='video/mp4')throw new AppError(422,'Publicação de vídeo exige certificação do processamento assíncrono; utilize imagem no piloto.');
    const [image]=await operation(job,account,`meta-image-${assetId}`,async()=>{const bytes=await assetBytes(asset.storage_key);const result=await meta(token,`${act}/adimages`,{bytes:Buffer.from(bytes).toString('base64')});const value=Object.values(result.images??{})[0] as {hash:string}|undefined;if(!value?.hash)throw new AppError(502,'Upload de imagem não confirmado.');return [{key:`meta-image-${assetId}`,id:value.hash,kind:'asset'}];});
-   const [creative]=await operation(job,account,`meta-creative-${assetId}`,async()=>{const result=await meta(token,`${act}/adcreatives`,{name:`${marker} / ${assetId}`,object_story_spec:{page_id:c.pageId,link_data:{...payloads.linkData,image_hash:image.id}}});return [{key:`meta-creative-${assetId}`,id:result.id,kind:'creative'}];});
-   await operation(job,account,`meta-ad-${assetId}`,async()=>{const result=await meta(token,`${act}/ads`,{name:`${marker} / ${asset.name}`,adset_id:adset.id,creative:{creative_id:creative.id},status:'PAUSED'});return [{key:`meta-ad-${assetId}`,id:result.id,kind:'ad'}];});
+   const [creative]=await operation(job,account,`meta-creative-${variantKey}`,async()=>{const result=await meta(token,`${act}/adcreatives`,{name:`${marker} / ${assetId}`,object_story_spec:{page_id:c.pageId,link_data:{...payloads.linkData,name:variant.title,message:variant.text,image_hash:image.id}}});return [{key:`meta-creative-${variantKey}`,id:result.id,kind:'creative'}];});
+   await operation(job,account,`meta-ad-${variantKey}`,async()=>{const result=await meta(token,`${act}/ads`,{name:`${marker} / ${asset.name}`,adset_id:adset.id,creative:{creative_id:creative.id},status:'PAUSED'});return [{key:`meta-ad-${variantKey}`,id:result.id,kind:'ad'}];});
  }
 }
 export async function executePublication(job:Job) {
  requireActivationEnabled(job.kind);
  if(process.env.ADS_PUBLISH_ENABLED!=='true')throw new AppError(422,'Publicação externa desabilitada.');
- const version=(await db.query('SELECT briefing FROM campaign_versions WHERE campaign_id=$1 AND version=$2',[job.campaign_id,job.version])).rows[0];const briefing=whatsappBriefingSchema.parse(version.briefing);
+ const version=(await db.query('SELECT briefing FROM campaign_versions WHERE campaign_id=$1 AND version=$2',[job.campaign_id,job.version])).rows[0];const briefing=campaignBriefingSchema.parse(version.briefing);
  for(const c of briefing.channels) {
   const account=(await db.query("SELECT a.*,co.credentials FROM ad_accounts a JOIN connections co ON co.id=a.connection_id WHERE a.id=$1 AND a.client_id=$2 AND a.available AND co.status='connected'",[c.accountId,job.client_id])).rows[0] as Account|undefined;if(!account)throw new AppError(422,'Conta desconectada.');
   const token=await accessToken({id:account.connection_id,platform:account.platform,credentials:account.credentials});
-  if(account.platform!=='meta')throw new AppError(422,'Esta versão publica somente Meta para WhatsApp.');
   try {
-    if(job.kind==='create')await createMeta(job,account,briefing,c,token);
+    if(job.kind==='create'){if(account.platform==='meta')await createMeta(job,account,briefing,c,token);else await createGoogle(job,account,briefing,c,token);}
     else if(job.kind==='activate')await activate(job,account,token);
     else throw new AppError(422,'Tipo de tarefa não suportado.');
   }catch(error){
@@ -112,10 +112,11 @@ export async function executePublication(job:Job) {
  }
 }
 async function activate(job:Job,account:Account,token:string) {
+ requireActivationEnabled('activate');
  const objects=(await db.query('SELECT * FROM external_objects WHERE campaign_id=$1 AND version=$2 AND account_id=$3',[job.campaign_id,job.version,account.id])).rows;
  if(account.platform==='google') {
   const campaign=objects.find(o=>o.kind==='campaign');if(!campaign)throw new AppError(409,'Campanha externa ausente.');
-  await operation(job,account,'google-activate',async()=>{await googleRequest(token,`customers/${account.external_id}/campaigns:mutate`,{operations:[{update:{resourceName:campaign.external_id,status:'ENABLED'},updateMask:'status'}]});return [{key:campaign.object_key,id:campaign.external_id,kind:'campaign',status:'ACTIVE'}];});
+  await operation(job,account,'google-activate',async()=>{requireActivationEnabled('activate');const serving=objects.filter(o=>['adgroup','ad','campaign'].includes(o.kind));const mutateOperations=serving.sort((a,b)=>Number(a.kind==='campaign')-Number(b.kind==='campaign')).map(o=>({[o.kind==='campaign'?'campaignOperation':o.kind==='adgroup'?'adGroupOperation':'adGroupAdOperation']:{update:{resourceName:o.external_id,status:'ENABLED'},updateMask:'status'}}));await googleRequest(token,`customers/${account.external_id}/googleAds:mutate`,{mutateOperations,partialFailure:false});return serving.map(o=>({key:o.object_key,id:o.external_id,kind:o.kind,status:'ACTIVE'}));});
  } else {
   for(const kind of ['ad','adset','campaign'])for(const object of objects.filter(o=>o.kind===kind))await operation(job,account,`activate-${object.object_key}`,async()=>{await meta(token,object.external_id,{status:'ACTIVE'});return [{key:object.object_key,id:object.external_id,kind,status:'ACTIVE'}];});
  }

@@ -1,4 +1,4 @@
-# API do painel — Meta WhatsApp
+# API do painel — Meta WhatsApp e Google Pesquisa
 
 Sessões HttpOnly de 12 horas, perfis e acesso por cliente. Mutações exigem `Origin` igual a `APP_URL`. O navegador não recebe credenciais da Meta, do banco ou do S3. A fila é executada pelo worker nativo ou por Vercel Workflows. Antigos endpoints `/api/internal/*` retornam 404.
 
@@ -53,3 +53,18 @@ Dados antigos de Google, relatórios e métricas são preservados. O módulo de 
 `GET /api/publication-policy` exige sessão e retorna apenas `creationEnabled` e `activationEnabled`, com cache privado desabilitado. A ativação só é apresentada como disponível quando as duas flags do servidor estão habilitadas. O endpoint não altera permissões nem enfileira trabalhos.
 
 A revisão explica bloqueios, mantém os botões indisponíveis durante a verificação e exibe erros dentro da janela. A validação do servidor e os bloqueios do worker permanecem obrigatórios, independentemente da interface.
+
+## Estratégias
+
+Todas as rotas abaixo exigem sessão e acesso ao cliente. Operador/administrador salva e prepara; aprovador/administrador aprova posteriormente cada campanha. As respostas não contêm credenciais.
+
+| Método | Rota `/api/...` | Função |
+|---|---|---|
+| GET | clients/:id/strategies | lista rascunhos e estratégias preparadas |
+| GET | clients/:id/strategies/:strategyId | recupera dados e versão |
+| PUT | clients/:id/strategies/:strategyId | `{expectedVersion,step,data}`; ID UUID novo com expectedVersion 0 |
+| POST | clients/:id/strategies/:strategyId/prepare | `{version}`; prepara propostas internas, idempotente após conclusão |
+| POST | clients/:id/strategies/:strategyId/reviews | `{notes}`; registra revisão humana e recalcula próxima data |
+| GET | clients/:id/assets/:assetId/preview | redireciona para imagem privada com assinatura de 120 segundos |
+
+Rascunhos podem estar incompletos, mas referências preenchidas devem pertencer ao cliente. A preparação valida todos os campos e materiais antes de inserir qualquer campanha. Conflitos de versão retornam 409. Nenhuma rota de estratégia libera `ADS_PUBLISH_ENABLED` ou `ADS_ACTIVATION_ENABLED`.

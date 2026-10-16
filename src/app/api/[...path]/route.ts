@@ -8,11 +8,12 @@ import { AppError,requireRole,uuid } from '@/lib/domain';
 import { hash,passwordMatches } from '@/lib/security';
 import { saveCampaign,campaignAction,audit } from '@/lib/campaigns';
 import { dispatchCampaignJob,dispatchWorkflow } from '@/lib/workflow-dispatch';
-import { uploadUrl,freezeUpload,storePdf,downloadUrl } from '@/lib/storage';
+import { uploadUrl,freezeUpload,storePdf,downloadUrl,previewUrl } from '@/lib/storage';
 import { oauthStart,oauthCallback,listRemoteAccounts } from '@/lib/oauth';
 import { synchronizeAccounts,savedAccounts,assignAccounts } from '@/lib/account-registry';
 import { publicationCapabilities } from '@/lib/publication-policy';
 import { portfolioOverview } from '@/lib/portfolio';
+import {listStrategies,getStrategy,saveStrategy,prepareStrategy,recordStrategyReview} from '@/lib/strategies';
 import { reportPdf,reportData,reportConfigSchema,reportLogo } from '@/lib/reports';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -63,6 +64,13 @@ async function handler(request:Request,context:Context) {
   }
   if(path[0]==='clients'&&path[1]) {
     const clientId=uuid.parse(path[1]); await requireClient(user,clientId);
+    if(path[2]==='strategies') {
+      if(path.length===3&&method==='GET')return NextResponse.json(await listStrategies(user,clientId),{headers:{'Cache-Control':'private, no-store'}});
+      if(path.length===4&&method==='GET')return NextResponse.json(await getStrategy(user,clientId,path[3]),{headers:{'Cache-Control':'private, no-store'}});
+      if(path.length===4&&method==='PUT')return NextResponse.json(await saveStrategy(user,clientId,path[3],await request.json()));
+      if(path.length===5&&path[4]==='prepare'&&method==='POST'){const {version}=z.object({version:z.number().int().positive()}).parse(await request.json());return NextResponse.json(await prepareStrategy(user,clientId,path[3],version));}
+      if(path.length===5&&path[4]==='reviews'&&method==='POST'){const {notes}=z.object({notes:z.string().trim().min(3).max(2000)}).parse(await request.json());return NextResponse.json(await recordStrategyReview(user,clientId,path[3],notes));}
+    }
     if(path[2]==='members'&&method==='POST') { requireRole(user.role,[]); const {userId}=z.object({userId:uuid}).parse(await request.json()); await transaction(async tx=>{ await tx.query('INSERT INTO client_members(client_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[clientId,userId]); await audit(tx,user,clientId,'member.granted',userId); }); return NextResponse.json({ok:true}); }
     if(path[2]==='accounts'&&method==='GET') return NextResponse.json((await db.query("SELECT a.*,CASE WHEN a.available THEN c.status ELSE 'unavailable' END AS connection_status FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.client_id=$1 ORDER BY a.name",[clientId])).rows);
     if(path[2]==='connections'&&path.length===3&&method==='GET') return NextResponse.json((await db.query('SELECT id,platform,status,created_at FROM connections WHERE client_id=$1',[clientId])).rows);
@@ -82,6 +90,7 @@ async function handler(request:Request,context:Context) {
       if(method==='POST') return NextResponse.json(await saveCampaign(user,clientId,await request.json()),{status:201});
     }
     if(path[2]==='assets') {
+      if(path.length===5&&path[4]==='preview'&&method==='GET'){const asset=(await db.query("SELECT storage_key FROM assets WHERE id=$1 AND client_id=$2 AND status='ready' AND content_type IN ('image/png','image/jpeg','image/webp')",[uuid.parse(path[3]),clientId])).rows[0];if(!asset)throw new AppError(404,'Imagem indisponível.');return NextResponse.redirect(await previewUrl(asset.storage_key),{headers:{'Cache-Control':'private, no-store'}});}
       if(method==='GET') return NextResponse.json((await db.query('SELECT * FROM assets WHERE client_id=$1 ORDER BY created_at DESC',[clientId])).rows);
       requireRole(user.role,['operator']);
       if(path[3]&&path[4]==='confirm'&&method==='POST') {const id=uuid.parse(path[3]);await transaction(async tx=>{const asset=(await tx.query('SELECT * FROM assets WHERE id=$1 AND client_id=$2 FOR UPDATE',[id,clientId])).rows[0];if(!asset)throw new AppError(404,'Material não encontrado.');if(asset.status==='ready')return;const key=`${clientId}/assets/${id}`;await freezeUpload(asset.storage_key,key,asset.content_type,Number(asset.size));await tx.query("UPDATE assets SET status='ready',storage_key=$2 WHERE id=$1",[id,key]);await audit(tx,user,clientId,'asset.ready',id);});return NextResponse.json({ok:true});}

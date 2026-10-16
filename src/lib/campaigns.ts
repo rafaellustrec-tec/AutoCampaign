@@ -2,9 +2,9 @@ import type { PoolClient } from 'pg';
 import { requireActivationEnabled } from './publication-policy';
 import { transaction } from './db';
 import { requireClient,type User } from './auth';
-import { AppError,whatsappBriefingSchema,makeProposal,requireRole,requireTransition,type Briefing } from './domain';
+import { AppError,campaignBriefingSchema,makeProposal,requireRole,requireTransition,type Briefing } from './domain';
 export async function audit(tx:PoolClient,user:User,clientId:string,action:string,entity:string,detail:unknown={}) { await tx.query('INSERT INTO audit_log(client_id,user_id,action,entity_id,detail) VALUES($1,$2,$3,$4,$5)',[clientId,user.id,action,entity,JSON.stringify(detail)]); }
-async function validateReferences(tx:PoolClient,clientId:string,briefing:Briefing) {
+export async function validateReferences(tx:PoolClient,clientId:string,briefing:Briefing) {
   for(const channel of briefing.channels) {
     const account=await tx.query("SELECT a.id FROM ad_accounts a JOIN connections c ON c.id=a.connection_id WHERE a.id=$1 AND a.client_id=$2 AND a.platform=$3 AND a.available AND c.status='connected'",[channel.accountId,clientId,channel.platform]);
     if(!account.rowCount) throw new AppError(422,'Conta indisponível ou pertencente a outro cliente.');
@@ -17,7 +17,7 @@ async function validateReferences(tx:PoolClient,clientId:string,briefing:Briefin
   }
 }
 export async function saveCampaign(user:User,clientId:string,input:unknown,campaignId?:string) {
-  requireRole(user.role,['operator']); const briefing=whatsappBriefingSchema.parse(input);
+  requireRole(user.role,['operator']); const briefing=campaignBriefingSchema.parse(input);
   return transaction(async tx=>{
     await requireClient(user,clientId,tx); await validateReferences(tx,clientId,briefing);
     let campaign;
@@ -41,7 +41,7 @@ export async function campaignAction(user:User,id:string,action:string,expectedV
     if(campaign.version!==expectedVersion) throw new AppError(409,'A versão mudou. Atualize a página e revise novamente.');
     requireTransition(campaign.status,action);
     const version=(await tx.query('SELECT * FROM campaign_versions WHERE campaign_id=$1 AND version=$2',[id,expectedVersion])).rows[0];
-    await validateReferences(tx,campaign.client_id,whatsappBriefingSchema.parse(version.briefing));
+    await validateReferences(tx,campaign.client_id,campaignBriefingSchema.parse(version.briefing));
     let status:string;
     if(action==='propose') {
       await tx.query('UPDATE campaign_versions SET proposal=$3 WHERE campaign_id=$1 AND version=$2',[id,expectedVersion,JSON.stringify(makeProposal(version.briefing))]);

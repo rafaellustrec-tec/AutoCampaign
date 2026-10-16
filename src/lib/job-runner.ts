@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { requireActivationEnabled } from './publication-policy';
 import type { PoolClient } from 'pg';
 import { db, transaction } from './db';
-import { AppError } from './domain';
+import { AppError,metaCreativeVariants } from './domain';
 import { executePublication } from './publishers';
 
 export type Job = {id:string;client_id:string;campaign_id:string;version:number;kind:'create'|'activate'|'sync';lease_token:string;attempts:number;max_attempts:number};
@@ -35,11 +35,11 @@ export async function completeJob(id:string,lease:string) {
     const required=job.kind==='create'?'PAUSED':'ACTIVE';
     for(const channel of version.briefing.channels) {
       const result=await tx.query('SELECT kind,delivery_status FROM external_objects WHERE campaign_id=$1 AND version=$2 AND account_id=$3',[job.campaign_id,job.version,channel.accountId]);
-      for(const kind of ['campaign','adset','ad']) {
+      for(const kind of channel.platform==='google'?['campaign','adgroup','ad']:['campaign','adset','ad']) {
         const rows=result.rows.filter(o=>o.kind===kind);
         if(!rows.length||rows.some(o=>o.delivery_status!==required)) throw new AppError(409,'Estrutura externa incompleta ou status não confirmado.');
       }
-      if(result.rows.filter(o=>o.kind==='ad').length!==channel.assetIds.length) throw new AppError(409,'Nem todos os materiais aprovados possuem anúncio confirmado.');
+      if(result.rows.filter(o=>o.kind==='ad').length!==(channel.platform==='google'?1:metaCreativeVariants(channel,version.briefing.name,version.briefing.offer).length)) throw new AppError(409,'Nem todos os materiais aprovados possuem anúncio confirmado.');
     }
     await tx.query('UPDATE campaigns SET status=$2,updated_at=now() WHERE id=$1',[job.campaign_id,job.kind==='create'?'paused':'active']);
     await tx.query("UPDATE jobs SET status='succeeded',lease_until=NULL,error=NULL,updated_at=now() WHERE id=$1",[id]);

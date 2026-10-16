@@ -11,3 +11,4 @@ export async function freezeUpload(source:string,destination:string,type:string,
 export async function assetBytes(key:string) {const object=await client().send(new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:key}));if(!object.Body)throw new AppError(422,'Arquivo não disponível.');return object.Body.transformToByteArray();}
 export async function storePdf(key:string,bytes:Uint8Array) {await client().send(new PutObjectCommand({Bucket:process.env.S3_BUCKET,Key:key,Body:bytes,ContentType:'application/pdf'}));}
 export async function downloadUrl(key:string) {return getSignedUrl(client(),new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:key,ResponseContentDisposition:'attachment; filename="relatorio.pdf"'}),{expiresIn:120});}
+export async function previewUrl(key:string) {return getSignedUrl(client(),new GetObjectCommand({Bucket:process.env.S3_BUCKET,Key:key,ResponseContentDisposition:'inline'}),{expiresIn:120});}
